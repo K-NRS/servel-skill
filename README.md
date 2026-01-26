@@ -12,75 +12,53 @@ bunx skills add K-NRS/servel-skill
 
 ### Manual Installation
 
-Download the skill file and place it in your agent's configuration directory:
-
-```bash
-curl -O https://raw.githubusercontent.com/K-NRS/servel-skill/main/SKILL.md
-```
-
 | Agent | Location |
 |-------|----------|
-| **Antigravity** | `.agent/skills/servel/SKILL.md` |
-| **Claude Code** | `~/.claude/skills/servel/SKILL.md` |
-| **Codex** | `$CODEX_HOME/skills/servel/SKILL.md` or `.codex/skills/servel/SKILL.md` |
-| **Cursor** | `.cursor/rules/servel.md` or append to `.cursorrules` |
-| **Gemini CLI** | `~/.gemini/skills/servel/SKILL.md` |
+| **Claude Code** | `~/.claude/skills/servel/` |
+| **Cursor** | `.cursor/rules/servel.md` |
+| **Gemini CLI** | `~/.gemini/skills/servel/` |
+| **Goose** | `~/.config/goose/skills/servel/` |
+| **OpenCode** | `~/.opencode/skills/servel/` |
+| **Codex** | `$CODEX_HOME/skills/servel/` |
 | **GitHub Copilot** | `.github/copilot-instructions.md` |
-| **Goose** | `~/.config/goose/skills/servel/SKILL.md` or `.goose/skills/servel/SKILL.md` |
-| **Kiro CLI** | `~/.kiro/skills/servel/SKILL.md` |
-| **OpenCode** | `~/.opencode/skills/servel/SKILL.md` or `.opencode/skills/servel/SKILL.md` |
-| **Qoder** | `~/.qoder/skills/servel/SKILL.md` or `.qoder/skills/servel/SKILL.md` |
-| **Trae** | `.trae/rules/servel.md` |
-| **Windsurf** | `.windsurfrules` |
-| **Cline** | `.clinerules` |
-| **Aider** | `CONVENTIONS.md` |
 
-**Example (Claude Code):**
 ```bash
+# Claude Code
 mkdir -p ~/.claude/skills/servel
 curl -o ~/.claude/skills/servel/SKILL.md https://raw.githubusercontent.com/K-NRS/servel-skill/main/SKILL.md
-```
-
-**Example (Cursor):**
-```bash
-mkdir -p .cursor/rules
-curl -o .cursor/rules/servel.md https://raw.githubusercontent.com/K-NRS/servel-skill/main/SKILL.md
-```
-
-**Example (Gemini CLI):**
-```bash
-mkdir -p ~/.gemini/skills/servel
-curl -o ~/.gemini/skills/servel/SKILL.md https://raw.githubusercontent.com/K-NRS/servel-skill/main/SKILL.md
+mkdir -p ~/.claude/skills/servel/references
+curl -o ~/.claude/skills/servel/references/TEMPLATES.md https://raw.githubusercontent.com/K-NRS/servel-skill/main/references/TEMPLATES.md
 ```
 
 ## What This Skill Does
 
-Teaches AI agents to use Servel for deployment and infrastructure management:
+Teaches agents to use Servel for deployment and infrastructure:
 
-- Deploy applications with `servel deploy` (auto-detects project type)
-- Manage 44+ infrastructure types (databases, queues, caches, platforms)
-- Link infrastructure to apps (auto-injects connection strings)
-- Preview deployments with auto-cleanup
-- Backup and restore databases
-- Configure domains with automatic SSL
-- Manage encrypted secrets
-- Development mode with file sync
-- **Build custom infrastructure templates** (see TEMPLATE-SKILL.md)
+- **Deploy applications** with auto-detection (Bun, Node, Python, Go)
+- **Manage 42+ infrastructure types** (databases, queues, caches, platforms)
+- **Link infrastructure** to apps (auto-injects connection strings)
+- **Preview deployments** with configurable TTL
+- **Backup and restore** databases
+- **Configure domains** with automatic SSL
+- **Manage secrets** (encrypted with Age)
+- **Dev mode** with file sync and team collaboration
+- **Alerts** via Telegram, Slack, Discord
+- **Create custom templates** for new infrastructure types
 
-## Included Skills
+## Structure
 
-| File | Purpose |
-|------|---------|
-| `SKILL.md` | Core Servel usage (deploy, infrastructure, servers) |
-| `TEMPLATE-SKILL.md` | Build infrastructure templates |
+```
+servel-skill/
+├── SKILL.md              # Main skill (loaded when triggered)
+└── references/
+    └── TEMPLATES.md      # Template building guide (loaded on-demand)
+```
 
 ## Links
 
 - [Servel Website](https://servel.dev)
 - [Documentation](https://servel.dev/docs)
-- [Infrastructure Hub](https://hub.servel.dev) — Explore 44+ pre-defined infrastructures
-- [Configuration Schema](https://servel.dev/docs/configuration)
-- [Template Creation Guide](https://github.com/K-NRS/servel-skill/blob/main/TEMPLATE-SKILL.md)
+- [Infrastructure Hub](https://hub.servel.dev)
 
 ## License
 

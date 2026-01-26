@@ -1,21 +1,28 @@
----
-name: servel-template
-description: Create Servel infrastructure templates for the Hub. Use when building infrastructure templates, adding new services to hub, creating meta.yaml or v1.yaml files, or configuring compose-based templates. Triggers on template creation, infrastructure types, hub templates, service definitions.
----
-
 # Servel Template Building Guide
 
-Build infrastructure templates for Servel Hub. Templates enable `servel add <type>` for any service.
+Build infrastructure templates for `servel add <type>`. Templates can be:
+- **Local**: Project-specific in `.servel/templates/`
+- **Server**: Shared across projects in `/var/servel/templates/`
 
 ## Template Location & Structure
 
+**Local (project-specific):**
 ```
-hub/data/infrastructure/{category}/{type}/
+.servel/templates/{category}/{type}/
 ├── meta.yaml    # Version metadata
-└── v1.yaml      # Full template config (latest version)
+└── v1.yaml      # Full template config
+```
+
+**Server-wide:**
+```
+/var/servel/templates/{category}/{type}/
+├── meta.yaml
+└── v1.yaml
 ```
 
 **Categories:** `databases`, `queues`, `searches`, `platforms`, `caches`, `blockchains`, `monitoring`, `analytics`, `storage`, `email`, `ci`, `internal`, `realtime`
+
+**Priority:** Local → Server → Hub (local templates override built-in)
 
 ## Quick Start
 
@@ -751,26 +758,29 @@ rotatable_credentials:
 
 ## Testing Template
 
-1. Build CLI: `cd src && make build`
-2. Deploy hub: `servel deploy hub/`
-3. Test: `servel add mytype --name test --dry-run`
-4. Verify: Check generated compose, env vars, routing
+**Local template (recommended for development):**
+```bash
+# Create template in project
+mkdir -p .servel/templates/databases/mydb
+# Add meta.yaml and v1.yaml
 
-## CLI Integration (Advanced)
+# Test with dry-run
+servel add mydb --name test --dry-run
 
-For new categories, update `src/internal/infra/templates/`:
-
-```go
-// types.go - Add constants
-TypeNewService InfraType = "newservice"
-CategoryNewCat Category = "newcat"
-
-// discovery.go - Add to slices and switches
-// - categoryDirs
-// - dirToCategory
-// - getHardcodedCategory
-// - GetKnownTypes
-// - PluralizeCategory (for new categories)
+# Deploy for real
+servel add mydb --name test
 ```
 
-Most templates work automatically via dynamic discovery without CLI changes.
+**Server-wide template:**
+```bash
+# Copy to server templates dir
+servel ssh myserver
+mkdir -p /var/servel/templates/databases/mydb
+# Add meta.yaml and v1.yaml
+
+# Test from any project
+servel add mydb --name test --dry-run
+```
+
+**Verify:** Check generated compose, env vars, routing labels.
+

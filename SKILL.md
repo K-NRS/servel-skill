@@ -1,52 +1,75 @@
 ---
 name: servel
-description: Self-hosted deployment platform via Docker Swarm. Use when deploying applications, managing infrastructure (databases, queues, caches), viewing logs, managing secrets, or performing server operations. Triggers on deployment, infrastructure, databases, redis, postgres, backup, restore, logs, secrets, SSL, domains, or server management tasks.
+description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 42+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, or server management.
 ---
 
 # Servel
 
-Servel is a self-hosted deployment platform that brings Vercel-like simplicity to your own VPS. Deploy any application with a single command—Servel auto-detects your project type, builds it, provisions SSL certificates, and deploys to Docker Swarm with zero-downtime rolling updates.
+Deploy applications and infrastructure to Docker Swarm with Vercel-like simplicity. Auto-detects project type, provisions SSL, zero-downtime rolling updates.
 
-## Architecture
+## Decision Tree
 
-- **Client-Server Model**: CLI runs locally, communicates via SSH to server daemon
-- **Orchestration**: Docker Swarm with Traefik for routing and auto-HTTPS
-- **State**: Filesystem-based (`/var/servel/`), no database dependency
-- **Secrets**: Age encryption, injected at runtime
+```
+Task → What are you trying to do?
+│
+├─ Deploy app → servel deploy
+│   ├─ Need database? → servel add postgres --name db && servel deploy --link-infra db
+│   ├─ Preview/PR? → servel deploy --preview --ttl 24h
+│   └─ Multi-env? → servel deploy --env production
+│
+├─ Add infrastructure → servel add <type> --name <name>
+│   ├─ Bundle? → servel add redis,postgres --prefix app
+│   ├─ High-availability? → servel add postgres --name db --ha
+│   └─ Link to app? → servel link myapp --infra db
+│
+├─ Debug/inspect → servel logs <name> -f | servel exec <name> sh
+│
+├─ Dev mode → servel dev
+│   └─ Team sync? → servel dev --team
+│
+├─ Manage server → servel server status | servel ssh <server>
+│
+├─ Routing issues → servel traefik status | servel verify dns <domain>
+│
+└─ Backup/restore → servel infra backup <name> | servel infra restore <name> <file>
+```
 
-## Core Capabilities
+## Quick Reference
 
-- **Zero-Config Deployments**: Auto-detects from lockfiles (bun.lockb, package-lock.json, requirements.txt, go.mod)
-- **Automatic HTTPS**: Traefik provisions Let's Encrypt certificates
-- **44+ Infrastructure Types**: Databases, caches, queues, platforms with one command
-- **Infrastructure Linking**: Connection strings auto-injected as environment variables
-- **Preview Deployments**: Isolated environments with configurable TTL
-- **Rolling Updates**: Zero-downtime with health checks and auto-rollback
-- **Image Caching**: Hashes dependencies, skips unchanged builds
-
-## Deployment
+### Deploy
 
 ```bash
-servel deploy                              # Deploy current project
-servel deploy --preview                    # Preview with unique URL
-servel deploy --preview --ttl 24h          # Preview with 24h auto-cleanup
-servel deploy --dry-run                    # Show plan without deploying
-servel deploy --link-infra mydb,redis      # Inject infra connection vars
-servel deploy -n myapp -d app.example.com  # Custom name and domain
-servel deploy --verbose                    # Show full build output
-servel deploy --no-registry                # Skip registry (faster single-node)
-servel deploy --memory 1g --cpu 0.5        # Set resource limits
-servel ps                                  # List deployments
-servel logs <name> -f                      # Follow logs
-servel rm <name>                           # Remove deployment
-servel rollback <name>                     # Rollback to previous version
-servel scale <name> 3                      # Scale replicas
-servel inspect <name>                      # View details
-servel exec <name> sh                      # Shell into container
-servel watch <name>                        # Watch deployment progress
+servel deploy                         # Auto-detect & deploy
+servel deploy --preview --ttl 24h     # Preview with cleanup
+servel deploy --link-infra db,redis   # Link infrastructure
+servel deploy --dry-run               # Show plan only
+servel deploy --no-registry           # Skip registry (single-node)
+servel deploy --env staging           # Multi-environment
+servel deploy --verbose               # Full build output
+servel deploy --rebuild               # Force rebuild, skip cache
+servel deploy --memory 1g --cpu 0.5   # Resource limits
+servel ps                             # List deployments
+servel ps --all-servers               # List across all servers
+servel ps --tree                      # Tree view with dependencies
+servel logs <name> -f                 # Follow logs
+servel watch <name>                   # Watch deploy progress (TUI)
+servel rm <name>                      # Remove
+servel rollback <name>                # Rollback version
+servel scale <name> 3                 # Scale replicas
+servel restart <name>                 # Restart deployment
+servel stop <name>                    # Stop deployment
+servel start <name>                   # Start stopped deployment
+servel rename <old> <new>             # Rename deployment
+servel exec <name> sh                 # Shell into container
+servel exec <name> -- cmd args        # Run command in container
+servel inspect <name>                 # Detailed deployment info
+servel history <name>                 # Deployment history
+servel versions <name>                # Available versions
 ```
 
 **Detection priority:** `servel.yaml` → `docker-compose.yml` → `Dockerfile` → preset → Nixpacks
+
+**Smart mode (default):** Detects what changed → config-only (~8s), static-only (~10s), or full build.
 
 **Key flags:**
 - `--name, -n` — Deployment name
@@ -55,78 +78,79 @@ servel watch <name>                        # Watch deployment progress
 - `--ttl` — Preview lifetime (1h, 6h, 1d, 7d, 2w)
 - `--link-infra` — Link infrastructure (comma-separated)
 - `--no-registry` — Skip registry push
-- `--memory` — Memory limit (512m, 1g, none)
-- `--cpu` — CPU limit (0.5, 1.0)
+- `--rebuild` — Force rebuild
+- `--no-smart` — Disable smart detection
+- `--verbose` — Show full build output
+- `--env` — Target environment
 - `--build-on <node>` — Build on specific node
 - `--local-build` — Build locally, push to registry
-- `--abort` — Ctrl+C kills deployment (default: detaches)
 
-**Cancellation behavior:** By default, Ctrl+C detaches (deployment continues on server). Use `--abort` to kill. Resume with `servel logs <name>`.
-
-## Context Detection
-
-Servel auto-detects project context from `.servel/state.json` in project directory:
-- Created by `servel deploy` and `servel rollback`
-- Contains: project name, server, environment, deployment ID
-- Environment-specific: `.servel/state.{env}.json`
-
-**Best practice:** In CI/CD, always specify app name explicitly (auto-detection is local-only).
-
-## Infrastructure
-
-44+ types across 9 categories with health monitoring, backups, and auto-generated credentials.
+### Infrastructure (42+ types)
 
 | Category | Types |
 |----------|-------|
-| **Database** | postgres, mysql, mongodb, clickhouse, libsql + HA variants |
-| **Cache/Queue** | redis, rabbitmq, kafka, nats |
-| **Search** | meilisearch, typesense, elasticsearch |
-| **Storage** | minio, seaweedfs |
-| **Monitoring** | prometheus, grafana, loki, uptimekuma, gatus, plausible |
-| **Platform** | supabase, chatwoot, typebot, affine, convex, n8n |
-| **Realtime** | livekit, hocuspocus, y-sweet |
-| **Email** | posteio |
-| **CI** | woodpecker |
+| Database | postgres, mysql, mongodb, clickhouse, redis, libsql + HA variants |
+| Queue | rabbitmq, kafka, nats |
+| Search | meilisearch, typesense |
+| Platform | supabase, chatwoot, typebot, n8n, affine, convex |
+| Monitoring | prometheus, grafana, loki, uptimekuma, gatus, plausible, umami |
+| Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
+| Storage | minio |
+| Email | posteio |
+| CI | woodpecker, woodpecker-agent |
+| Blockchain | bitcoin, ipfs, lnd |
 
 ```bash
-servel add postgres --name mydb            # Create PostgreSQL
-servel add redis,postgres --prefix app     # Bundle: app-redis, app-postgres
-servel add supabase --name supa            # Full Supabase stack
-servel add postgres --name db --ha         # High-availability (3+ nodes)
-servel link myapp --infra mydb             # Link → injects DATABASE_URL
-servel infra status                        # Health check all
-servel infra vars mydb                     # View connection variables
-servel infra backup mydb                   # Create backup
-servel infra restore mydb backup.sql.gz    # Restore from backup
-servel infra logs mydb -f                  # Follow logs
-servel infra rotate mydb                   # Rotate credentials
-servel deps myapp                          # Show linked infrastructure
+servel add postgres --name db         # Create
+servel add redis,postgres --prefix app # Bundle multiple
+servel add postgres --name db --ha    # High-availability
+servel add supabase --name supa       # Full platform stack
+servel infra status                   # Health check all
+servel infra vars db                  # View env vars
+servel infra logs db -f               # Follow logs
+servel infra backup db                # Backup
+servel infra restore db backup.sql.gz # Restore
+servel infra rotate db                # Rotate credentials
+servel infra restart db --force       # Force restart
+servel infra start db                 # Start
+servel infra stop db                  # Stop
+servel infra rename old new           # Rename
+servel infra rm db                    # Remove
+servel link myapp --infra db          # Link → injects DATABASE_URL
+servel unlink myapp --infra db        # Unlink
+servel deps myapp                     # Show dependencies
+servel connect db                     # Quick connect to infra
 ```
 
 **Linking injects:** DATABASE_URL, REDIS_URL, MONGODB_URI, etc. based on infrastructure type.
 
 **Node pinning:**
 - `--node hostname` — By hostname
-- `--alias db-node` — By alias (stable reference)
+- `--alias db-node` — By alias
 - `--label storage=ssd` — By node label
 
-**HA requirements:** 3+ nodes minimum. Uses Patroni (Postgres), Sentinel (Redis), Group Replication (MySQL).
-
-## Server Management
+### Server Management
 
 ```bash
 servel ssh <server>                   # SSH into server
 servel server status                  # Cluster health (CPU, memory, disk)
-servel server provision               # Provision new server
-servel server add <name> user@host    # Add server to config
-servel server use <name>              # Set default server
+servel server add <name> user@host    # Add server
+servel server list                    # List servers
+servel server use <name>              # Switch default server
+servel server remove <name>           # Remove server
+servel server provision               # Automated setup
+servel server domain set example.com  # Set primary domain
+servel server keys add <name> --key-file pubkey.pub # Add deploy key
+servel node ls                        # List swarm nodes
+servel node add worker user@host      # Add node to cluster
+servel node remove <name>             # Remove node
+servel node promote <name>            # Promote to manager
+servel node health <name>             # Check node health
+servel node specs <name>              # Node specifications
 servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
-servel node ls                        # List swarm nodes
-servel node add <name> user@host      # Add node to cluster
 servel doctor                         # Diagnose issues
-servel verify                         # Verify configuration
 servel cleanup                        # Remove expired environments
 servel cleanup --force                # No confirmation
 servel prune                          # Remove dangling images/containers
@@ -134,83 +158,212 @@ servel prune --all                    # Remove unused images/networks/cache
 servel prune --all --volumes          # ⚠️ DATA LOSS: removes unused volumes
 ```
 
-**Health thresholds:** Critical >90%, Warning >75% (color-coded).
-
-**Maintenance schedule:** Run `servel cleanup --force` + `servel prune --all --force` weekly in CI.
-
-## Secrets
-
-Encrypted with Age, stored at `/var/servel/deployments/<app>/.env.age`.
+### Secrets
 
 ```bash
-servel secrets set API_KEY              # Set (prompted input)
-servel secrets set API_KEY "value"      # Set with value
-servel secrets list                     # List keys
-servel secrets get API_KEY              # Get value
-servel secrets rm API_KEY               # Remove
-servel secrets rotate API_KEY           # Rotate
-servel deploy --migrate-secrets         # Auto-detect *_KEY, *_SECRET, *_PASSWORD
+servel secrets set API_KEY            # Set (prompted input)
+servel secrets set API_KEY "value"    # Set with value
+servel secrets list                   # List keys
+servel secrets get API_KEY            # Get value
+servel secrets rm API_KEY             # Remove
+servel secrets rotate API_KEY         # Rotate
+servel secrets backup                 # Backup all secrets
+servel secrets scan                   # Scan for exposed secrets
+servel deploy --migrate-secrets       # Auto-detect *_KEY, *_SECRET, *_PASSWORD
 ```
 
-**In servel.yaml:** Use key-only format:
-```yaml
-secrets:
-  - API_KEY
-  - DB_PASSWORD
-```
-
-## Domains
-
-Auto-SSL via Let's Encrypt through Traefik.
+### Domains & Routing
 
 ```bash
-servel domains add myapp app.example.com   # Add domain
-servel domains ls                          # List domains
-servel domains rm myapp app.example.com    # Remove domain
-servel domains redirect old.com new.com    # Create redirect
+servel domains add myapp app.com      # Add domain (auto-SSL)
+servel domains ls                     # List all domains
+servel domains rm myapp app.com       # Remove domain
+servel domains redirect old.com new.com # Create redirect
+servel domains remove-redirect old.com # Remove redirect
+servel domains list-redirects         # List redirects
+servel routes <name>                  # Show deployment routes
 ```
 
-## Development Mode
+### Traefik (Routing Layer)
 
 ```bash
-servel dev                       # File sync with hot reload
-servel dev --team                # Bidirectional sync
-servel dev --port 3001           # Custom port
-servel dev list                  # View active sessions
-servel dev logs <session> -f     # Follow session logs
-servel dev stop <session>        # Stop session
-servel tunnel                    # Expose local service publicly
-servel port-forward mydb 5432    # Forward remote port locally
+servel traefik status                 # Router status
+servel traefik logs                   # Traefik logs
+servel traefik routes <name>          # Detailed route info
+servel traefik certs                  # SSL certificate info
+servel traefik test <domain>          # Test domain routing
+servel traefik restart                # Restart Traefik
 ```
 
-**Port auto-detection:** Next.js=3000, Vite=5173, Go=8080, Django=8000.
+### Verification
 
-**Domain handling:**
-- Subdomain only: `my-app` → `dev-my-app.example.com`
-- Full domain: `staging.custom.com` → used as-is
+```bash
+servel verify <name>                  # Full verification
+servel verify config                  # Verify configuration
+servel verify health <name>           # Check service health
+servel verify ssl <domain>            # Check SSL certificates
+servel verify dns <domain>            # Check DNS configuration
+servel verify routing <name>          # Check Traefik routing
+servel verify dependencies <name>     # Check dependencies
+servel verify resources               # Check resource availability
+```
 
-**File sync:** 300ms debounce, rsync for batches >5 files. Default ignores: `.git/`, `node_modules/`, `.env*`, `dist/`, `build/`.
+### Dev Mode
 
-## Configuration
+```bash
+servel dev                            # Start dev session
+servel dev --team                     # Bidirectional sync (collaboration)
+servel dev --port 3001                # Custom port
+servel dev --domain staging.app.com   # Custom domain
+servel dev --no-sync                  # One-time upload only
+servel dev --conflict-policy newer-wins # Sync conflict resolution
+servel dev list                       # Active sessions
+servel dev logs <id> -f               # Follow session logs
+servel dev stop <id>                  # Stop session
+servel tunnel                         # Expose localhost publicly
+servel tunnel start <port>            # Start tunnel on port
+servel tunnel list                    # List active tunnels
+servel tunnel stop <id>               # Stop tunnel
+servel port-forward db 5432           # Forward remote port locally
+```
 
-Optional `servel.yaml`. Full schema: https://servel.dev/docs/configuration
+**Conflict policies:** remote-wins, local-wins, newer-wins, backup
+
+### Environment Variables
+
+```bash
+servel env set <name> KEY=VALUE       # Set env var
+servel env vars <name>                # Show env vars
+servel env list                       # List environments
+servel config show <name>             # Show deployment config
+servel config sync <name>             # Sync config to servel.yaml
+servel config sync --dry-run          # Preview sync
+```
+
+### Alerts
+
+```bash
+servel alerts setup                   # Interactive wizard
+servel alerts add telegram            # Add Telegram channel
+servel alerts add slack               # Add Slack channel
+servel alerts add discord             # Add Discord channel
+servel alerts add webhook             # Add webhook
+servel alerts test                    # Test notifications
+servel alerts status                  # Show alert status
+servel alerts history                 # View alert history
+servel alerts pause 2h                # Maintenance mode (pause alerts)
+```
+
+### CI/CD
+
+```bash
+servel ci init github                 # Initialize GitHub Actions
+servel ci init gitlab                 # Initialize GitLab CI
+servel ci list                        # List pipelines
+servel ci run <config>                # Run built-in CI
+servel ci status <run-id>             # Check run status
+servel ci logs <run-id>               # View CI logs
+servel ci recent                      # Recent runs
+servel ci cancel <run-id>             # Cancel run
+servel ci retry <run-id>              # Retry run
+```
+
+### Access Control
+
+```bash
+servel auth login                     # User authentication
+servel auth logout                    # Logout
+servel auth whoami                    # Current user info
+servel auth enable <name>             # Enable basic auth
+servel auth disable <name>            # Disable basic auth
+servel access user                    # User management
+servel access role                    # Role management
+```
+
+### Advanced
+
+```bash
+servel detect                         # Detect project build type
+servel detect --verbose               # Detailed detection info
+servel init                           # Initialize servel.yaml
+servel validate                       # Validate servel.yaml
+servel upgrade                        # Self-upgrade CLI
+servel upgrade-servers                # Upgrade server binaries
+servel audit list                     # View audit logs
+servel audit stats                    # Audit statistics
+servel tag <name> <tag>               # Add tags to deployment
+servel untag <name> <tag>             # Remove tags
+```
+
+## Common Workflows
+
+### Deploy with Database
+
+```bash
+servel add postgres --name mydb
+servel deploy --link-infra mydb
+# App receives DATABASE_URL, DB_HOST, DB_PORT, DB_PASSWORD
+```
+
+### Preview Deployments
+
+```bash
+servel deploy --preview --ttl 24h
+# Returns: https://myapp-pr42.example.com
+```
+
+### Multi-Environment
+
+```bash
+servel deploy --env production
+servel deploy --env staging
+servel deploy --preview
+```
+
+### Debug Container
+
+```bash
+servel logs myapp -f                  # View logs
+servel exec myapp sh                  # Shell into container
+servel exec myapp -- cat /app/.env    # Run command
+```
+
+### Backup & Restore
+
+```bash
+servel infra backup mydb
+servel infra restore mydb backup-2024-01-15.sql.gz
+```
+
+### CI/CD Deploy Keys
+
+```bash
+servel server keys add prod --name github-actions --key-file pubkey.pub
+```
+
+### Troubleshoot Routing
+
+```bash
+servel verify dns app.example.com     # Check DNS
+servel verify ssl app.example.com     # Check SSL
+servel traefik test app.example.com   # Test routing
+servel traefik logs                   # View Traefik logs
+```
+
+## Configuration (servel.yaml)
 
 ```yaml
 name: myapp
 domain: app.example.com
 
 build:
-  preset: bun                    # bun, node, python, go, rust
+  preset: bun                         # bun, node, python, go
   dockerfile: Dockerfile
   buildCommand: bun run build
   startCommand: bun run start
-  context: .
-  args:
-    NODE_ENV: production
 
 env:
   NODE_ENV: production
-  LOG_LEVEL: info
 
 secrets:
   - API_KEY
@@ -223,24 +376,19 @@ resources:
 replicas: 2
 
 healthcheck:
-  type: http                     # http, tcp, cmd, none
+  type: http                          # http, tcp, cmd, none
   path: /health
   interval: 30s
   timeout: 10s
   retries: 3
-  start_period: 60s
 
 update:
-  order: start-first             # start-first, stop-first
-  parallelism: 1
-  delay: 5s
-  failure_action: rollback       # rollback, pause, continue
+  order: start-first                  # start-first, stop-first
+  failure_action: rollback            # rollback, pause, continue
 
 infra:
   - name: mydb
-    prefix: DB                   # → DB_HOST, DB_PORT, DB_PASSWORD
-  - name: cache
-    prefix: REDIS
+    prefix: DB                        # → DB_HOST, DB_PORT, DB_PASSWORD
 
 routes:
   - type: http
@@ -262,96 +410,69 @@ dev:
     ignore:
       - "*.log"
       - ".cache"
+
+environments:
+  production:
+    domain: myapp.com
+    replicas: 5
+  staging:
+    domain: staging.myapp.com
+  preview:
+    ttl: 7d
 ```
 
-**Environment variable priority:** CLI flags → servel.yaml `env:` → `.env` files. `.env.local` never loaded (security).
-
-**Build-time vs runtime:** `NEXT_PUBLIC_*` extracted locally as build args. Sensitive vars available at runtime only.
-
-## Command Aliases
+## Aliases
 
 | Command | Aliases |
 |---------|---------|
-| `deploy` | `d`, `push` |
-| `remove` | `rm`, `delete` |
-| `logs` | `log` |
-| `exec` | `x`, `run` |
-| `inspect` | `i`, `info` |
-| `rollback` | `rb` |
-| `ps` | `ls`, `list` |
-| `verify` | `v`, `check` |
-| `doctor` | `dr` |
-| `server` | `srv` |
-| `port-forward` | `pf` |
-| `watch` | `w` |
-| `add` | `create`, `new` |
-| `infra` | `infrastructure` |
-
-## Common Workflows
-
-**Deploy with database:**
-```bash
-servel add postgres --name mydb
-servel deploy --link-infra mydb
-# App receives DATABASE_URL, DB_HOST, DB_PORT, DB_PASSWORD
-```
-
-**Preview for PR:**
-```bash
-servel deploy --preview --ttl 24h
-# Returns: https://myapp-pr42.example.com
-```
-
-**Backup and restore:**
-```bash
-servel infra backup mydb
-servel infra restore mydb backup-2024-01-15.sql.gz
-```
-
-**Scale for traffic:**
-```bash
-servel scale myapp 5
-```
-
-**CI/CD deploy keys:**
-```bash
-servel server keys add prod --name github-actions --key-file pubkey.pub
-```
+| deploy | d, push |
+| remove | rm, delete |
+| logs | log |
+| exec | x, run |
+| rollback | rb |
+| inspect | i, info |
+| ps | ls, list |
+| verify | v, check |
+| doctor | dr |
+| port-forward | pf |
+| watch | w |
+| server | srv |
+| infra | infrastructure |
+| domains | dom |
+| alerts | alert, alrt |
+| connect | conn |
+| tunnel | tun |
+| rename | mv, move |
+| add | create, new |
+| stats | stat |
+| access | acl |
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Nixpacks misdetects project | Create Dockerfile or use `--provider` |
-| Port already in use | Override with `--port` flag |
-| File sync not working | Check ignore patterns, SSH, restart session |
-| Container exits immediately | Check logs, verify start command and port |
-| Domain not accessible | Verify DNS, container status, Traefik routing |
-| Context detection fails | Ensure `.servel/state.json` exists or specify app name |
+| Build fails | `servel logs <name>`, try `--verbose` |
+| Port conflict | Use `--port` flag |
+| Domain not working | `servel verify dns <domain>` |
+| SSL issues | `servel verify ssl <domain>` |
+| Container exits | Check start command and port |
+| Smart mode wrong | Use `--no-smart` for full rebuild |
+| Routing broken | `servel traefik test <domain>` |
+| Health check fails | `servel verify health <name>` |
 
 **Diagnostic commands:**
 ```bash
-servel doctor              # System health check
-servel verify              # Configuration validation
-servel logs <name>         # Application logs
-servel inspect <name>      # Deployment details
-servel server status       # Cluster health
+servel doctor                         # System check
+servel verify health <name>           # Health check
+servel verify dns <domain>            # DNS check
+servel verify ssl <domain>            # SSL check
+servel traefik status                 # Routing status
+servel logs <name>                    # View logs
+servel inspect <name>                 # Deployment details
 ```
 
-## Template Building
+## Reference Files
 
-For creating new infrastructure templates (Hub contributors), see [TEMPLATE-SKILL.md](./TEMPLATE-SKILL.md) which covers:
-- Template file structure (meta.yaml, v1.yaml)
-- Image-based vs compose-based templates
-- Port configuration (TCP/UDP, Traefik modes, SNI)
-- Credential rotation and service mappings
-- Health checks, deployment stages, backup/restore
-- Connection variables for `--link-infra`
-
-## Documentation
-
+- [Template Building Guide](references/TEMPLATES.md) - Create custom infrastructure types
 - Full docs: https://servel.dev/docs
-- Configuration: https://servel.dev/docs/configuration
-- Infrastructure Hub: https://hub.servel.dev (explore 44+ pre-defined types)
-- Dev mode: https://servel.dev/docs/dev-mode
-- Template creation: `docs/internal-docs/hub/TEMPLATE_CREATION.md`
+- Infrastructure Hub: https://hub.servel.dev
