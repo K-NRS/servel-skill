@@ -338,9 +338,20 @@ servel inspect <name>      # Deployment details
 servel server status       # Cluster health
 ```
 
+## Template Building
+
+For creating new infrastructure templates (Hub contributors), see [TEMPLATE-SKILL.md](./TEMPLATE-SKILL.md) which covers:
+- Template file structure (meta.yaml, v1.yaml)
+- Image-based vs compose-based templates
+- Port configuration (TCP/UDP, Traefik modes, SNI)
+- Credential rotation and service mappings
+- Health checks, deployment stages, backup/restore
+- Connection variables for `--link-infra`
+
 ## Documentation
 
 - Full docs: https://servel.dev/docs
 - Configuration: https://servel.dev/docs/configuration
 - Infrastructure Hub: https://hub.servel.dev (explore 44+ pre-defined types)
 - Dev mode: https://servel.dev/docs/dev-mode
+- Template creation: `docs/internal-docs/hub/TEMPLATE_CREATION.md`

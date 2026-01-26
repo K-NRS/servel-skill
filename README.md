@@ -65,6 +65,14 @@ Teaches AI agents to use Servel for deployment and infrastructure management:
 - Configure domains with automatic SSL
 - Manage encrypted secrets
 - Development mode with file sync
+- **Build custom infrastructure templates** (see TEMPLATE-SKILL.md)
+
+## Included Skills
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | Core Servel usage (deploy, infrastructure, servers) |
+| `TEMPLATE-SKILL.md` | Build infrastructure templates |
 
 ## Links
 
@@ -72,6 +80,7 @@ Teaches AI agents to use Servel for deployment and infrastructure management:
 - [Documentation](https://servel.dev/docs)
 - [Infrastructure Hub](https://hub.servel.dev) — Explore 44+ pre-defined infrastructures
 - [Configuration Schema](https://servel.dev/docs/configuration)
+- [Template Creation Guide](https://github.com/K-NRS/servel-skill/blob/main/TEMPLATE-SKILL.md)
 
 ## License
 
