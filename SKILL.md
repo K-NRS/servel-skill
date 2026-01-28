@@ -1,6 +1,6 @@
 ---
 name: servel
-description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 42+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, or server management.
+description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 45+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, or server management.
 ---
 
 # Servel
@@ -23,6 +23,7 @@ Task → What are you trying to do?
 │   └─ Link to app? → servel link myapp --infra db
 │
 ├─ Debug/inspect → servel logs <name> -f | servel exec <name> sh
+│   └─ Infra? → Use @ prefix: servel logs @mydb -f | servel exec @mydb --service rails sh
 │
 ├─ Dev mode → servel dev
 │   └─ Team sync? → servel dev --team
@@ -32,6 +33,23 @@ Task → What are you trying to do?
 ├─ Routing issues → servel traefik status | servel verify dns <domain>
 │
 └─ Backup/restore → servel infra backup <name> | servel infra restore <name> <file>
+```
+
+## Service Addressing (Symbol Prefixes)
+
+Most commands that target a service (exec, logs, inspect, stats, restart, stop, start, scale, env, remove) support symbol prefixes:
+
+| Prefix | Type | Resolves to | Example |
+|--------|------|-------------|---------|
+| `name` | Deployment | `servel-name-*` | `servel logs myapp -f` |
+| `@name` | Infrastructure | `servel-infra-name-*` | `servel logs @mydb -f` |
+| `~name` | System | `servel-system-name` | `servel logs ~traefik` |
+
+For multi-service infrastructure (chatwoot, supabase, etc.), use `--service`:
+```bash
+servel exec @chatwoot --service rails sh
+servel logs @supabase --service postgres -f
+servel restart @chatwoot --service sidekiq
 ```
 
 ## Quick Reference
@@ -85,15 +103,37 @@ servel versions <name>                # Available versions
 - `--build-on <node>` — Build on specific node
 - `--local-build` — Build locally, push to registry
 
-### Infrastructure (42+ types)
+### Deploy Aliases
+
+Define deployment presets in `servel.yaml`:
+```yaml
+deploy:
+  aliases:
+    preview:
+      ttl: "0"
+      domain: "{branch}.preview.myapp.com"
+      no_index: true
+    quick:
+      fast: true
+      local: true
+    staging:
+      env: staging
+      domain: "staging.myapp.com"
+```
+Usage: `servel deploy preview`, `servel deploy quick`
+- If a directory exists with that name → deploys directory
+- Otherwise → applies alias settings
+
+### Infrastructure (45+ types)
 
 | Category | Types |
 |----------|-------|
-| Database | postgres, mysql, mongodb, clickhouse, redis, libsql + HA variants |
-| Queue | rabbitmq, kafka, nats |
+| Database | postgres, mysql, mongodb, clickhouse, redis, libsql + HA variants (postgres-ha, mysql-ha, mongodb-ha, redis-ha) |
+| Queue | rabbitmq |
 | Search | meilisearch, typesense |
-| Platform | supabase, chatwoot, typebot, n8n, affine, convex |
-| Monitoring | prometheus, grafana, loki, uptimekuma, gatus, plausible, umami |
+| Platform | supabase, supabase-ha, chatwoot, typebot, convex, affine, forgejo, clawdbot, maily, surfsense |
+| Analytics | plausible, umami, openreplay |
+| Monitoring | prometheus, grafana, loki, promtail, uptimekuma, gatus, peekaping |
 | Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
 | Storage | minio |
 | Email | posteio |
@@ -326,6 +366,8 @@ servel deploy --preview
 servel logs myapp -f                  # View logs
 servel exec myapp sh                  # Shell into container
 servel exec myapp -- cat /app/.env    # Run command
+servel logs @mydb -f                  # View infra logs (@ prefix)
+servel exec @chatwoot --service rails sh  # Multi-service infra
 ```
 
 ### Backup & Restore
