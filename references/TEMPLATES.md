@@ -226,6 +226,14 @@ post_restore:
     command: ["psql", "-U", "postgres", "-c", "ALTER USER app WITH PASSWORD '{{.Env.DB_PASSWORD}}'"]
     description: Reset passwords after restore
 
+post_init:
+  - name: prepare_database
+    service: rails
+    command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
+    description: Initialize database schema
+    run_once: true
+    timeout: "10m"
+
 actions:
   shell:
     service: db
@@ -478,6 +486,41 @@ deployment_stages:
     wait_for_healthy: true
     timeout: "2m"
 ```
+
+### Lifecycle Hooks (Post-Init)
+
+Run commands after successful deployment (all services healthy):
+
+```yaml
+post_init:
+  - name: prepare_database
+    service: rails
+    command: ["bundle", "exec", "rails", "db:migrate"]
+    description: Run database migrations
+    run_once: true       # Only on first deployment (tracked in spec.json)
+    timeout: "10m"       # Default: 5m
+```
+
+**Features:**
+- `run_once: true` - Hook only executes on first deployment, state tracked in `HooksExecuted`
+- Hooks run sequentially after all deployment stages complete
+- Failures are logged but don't fail deployment (can re-run manually)
+
+### Service Overrides (Image/Command)
+
+Override images or commands per service (for compose-based templates):
+
+```yaml
+overrides:
+  services:
+    postgres:
+      image: pgvector/pgvector:pg16   # Override default image
+      command: ["postgres", "-c", "shared_preload_libraries=vectors"]
+    rails:
+      entrypoint: ["bundle", "exec"]
+```
+
+**Use case:** Upstream compose uses base image but you need a variant (e.g., pgvector for AI features).
 
 ### Placement
 
@@ -783,4 +826,15 @@ servel add mydb --name test --dry-run
 ```
 
 **Verify:** Check generated compose, env vars, routing labels.
+
+## Server-Side Template Caching
+
+On deployment, critical template fields are cached in `spec.json`:
+- `rotatable_credentials` - For offline credential rotation
+- `actions` - For `servel infra run @name action`
+- `post_restore` - For backup restore hooks
+- `post_init` - For lifecycle hooks
+- `deployment_stages` - For staged deployment tracking
+
+This enables these features to work without network access to the hub.
 

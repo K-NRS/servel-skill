@@ -145,9 +145,11 @@ servel add postgres --name db         # Create
 servel add redis,postgres --prefix app # Bundle multiple
 servel add postgres --name db --ha    # High-availability
 servel add supabase --name supa       # Full platform stack
+servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
 servel infra status                   # Health check all
 servel infra vars db                  # View env vars
-servel infra logs db -f               # Follow logs
+servel logs @db -f                    # Follow infra logs (@ prefix)
+servel logs @chatwoot --service rails -f  # Multi-service infra logs
 servel infra backup db                # Backup
 servel infra restore db backup.sql.gz # Restore
 servel infra rotate db                # Rotate credentials
@@ -163,6 +165,8 @@ servel connect db                     # Quick connect to infra
 ```
 
 **Linking injects:** DATABASE_URL, REDIS_URL, MONGODB_URI, etc. based on infrastructure type.
+
+**Lifecycle hooks:** Some templates auto-run setup commands on first deploy (e.g., Chatwoot runs `db:chatwoot_prepare`).
 
 **Node pinning:**
 - `--node hostname` — By hostname
