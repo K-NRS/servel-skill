@@ -517,6 +517,139 @@ servel logs <name>                    # View logs
 servel inspect <name>                 # Deployment details
 ```
 
+## Project Context Detection
+
+**IMPORTANT:** Before running any servel command for a project, check these local files to understand the deployment context.
+
+### .servel/ Directory (Project State)
+
+Located at `<project-root>/.servel/`. Created automatically after first deploy. Contains deployment state that tells you **which server** this project deploys to and its current configuration.
+
+**Files:**
+- `.servel/state.json` — Production environment state
+- `.servel/state.<env>.json` — Other environment states (e.g., `state.staging.json`)
+
+**State file structure:**
+```json
+{
+  "version": 1,
+  "server": "KN",                    // ← Which server this deploys to
+  "server_fingerprint": "uuid-...",  // Stable ID (survives server renames)
+  "deployment_id": "myapp",
+  "environment": "production",
+  "build_type": "dockerfile",        // dockerfile, compose, nixpacks
+  "project_name": "myapp",
+  "domain": "myapp.example.com",     // Saved domain (non-config projects)
+  "install_command": "",             // Vercel-style overrides
+  "build_command": "",
+  "start_command": "",
+  "port": "",
+  "runtime": "",                     // node or bun (for Nixpacks JS/TS)
+  "tags": [],
+  "network_mode": "",
+  "network_name": ""
+}
+```
+
+**How to use:**
+1. Read `.servel/state.json` to determine the target server and deployment name
+2. Check for multiple environments with `.servel/state.*.json`
+3. The `server` field maps to a remote in `~/.servel/config.yaml`
+4. If `.servel/` doesn't exist, the project hasn't been deployed yet
+
+**List environments:**
+```bash
+ls .servel/state*.json  # See all deployed environments
+```
+
+### servel.yaml (Project Configuration)
+
+Located at `<project-root>/servel.yaml`. Defines how the project should be built and deployed. This is the **declarative config** — checked into version control.
+
+**Key fields for context:**
+```yaml
+name: myapp                          # Deployment name
+domain: app.example.com              # Primary domain
+domains:                             # Multiple domains
+  - app.example.com
+  - api.example.com
+port: 3000                           # Container port
+
+build:
+  preset: bun                        # bun, node, python, go
+  dockerfile: Dockerfile
+  buildCommand: bun run build
+  startCommand: bun run start
+
+env:
+  NODE_ENV: production
+secrets:
+  - API_KEY
+
+resources:
+  memory: 512M
+  cpus: 0.5
+replicas: 2
+
+infra:                               # Linked infrastructure
+  - name: mydb
+    prefix: DB                       # → DB_HOST, DB_PORT, DB_PASSWORD
+
+routes:                              # Advanced routing
+  - type: http
+    domain: app.example.com
+    port: 3000
+
+persist:                             # Persistent storage paths
+  - /app/data
+
+environments:                        # Multi-environment overrides
+  production:
+    domain: myapp.com
+    replicas: 5
+  staging:
+    domain: staging.myapp.com
+
+deploy:
+  aliases:                           # Deploy presets
+    preview:
+      ttl: "0"
+      domain: "{branch}.preview.myapp.com"
+    quick:
+      fast: true
+      local: true
+
+middlewares:                          # Traefik middleware config
+  rate_limit:
+    average: 100
+    burst: 50
+
+dev:                                 # Dev mode settings
+  command: bun run dev
+  port: 3000
+```
+
+**Detection priority:** `servel.yaml` → `docker-compose.yml` → `Dockerfile` → preset → Nixpacks
+
+### Putting It Together
+
+When working with a servel-managed project:
+1. **Check `.servel/state.json`** → Know which server, deployment name, and environment
+2. **Check `servel.yaml`** → Know build config, domains, infra links, resources
+3. **No `.servel/` dir** → Project not yet deployed (use `servel deploy` first)
+4. **No `servel.yaml`** → Auto-detected project (Dockerfile/compose/preset)
+
+Example workflow:
+```
+# Understand current project deployment
+cat .servel/state.json          # → server: "KN", project_name: "myapp"
+cat servel.yaml                 # → domain, infra links, build config
+
+# Now you know: myapp is deployed on KN server
+servel logs myapp               # View logs
+servel inspect myapp            # Full details
+```
+
 ## Reference Files
 
 - [Template Building Guide](references/TEMPLATES.md) - Create custom infrastructure types
