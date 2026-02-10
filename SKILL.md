@@ -1,6 +1,6 @@
 ---
 name: servel
-description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 45+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, or server management.
+description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 45+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, rebalance, registry, node management, or access control.
 ---
 
 # Servel
@@ -28,7 +28,11 @@ Task → What are you trying to do?
 ├─ Dev mode → servel dev
 │   └─ Team sync? → servel dev --team
 │
-├─ Manage server → servel server status | servel ssh <server>
+├─ Find resource → servel find <name>
+│   └─ Infra only? → servel find @<name> --type postgres
+│
+├─ Manage server → servel remote status | servel ssh <server>
+│   └─ Capacity? → servel capacity
 │
 ├─ Routing issues → servel traefik status | servel verify dns <domain>
 │
@@ -83,7 +87,17 @@ servel exec <name> -- cmd args        # Run command in container
 servel inspect <name>                 # Detailed deployment info
 servel history <name>                 # Deployment history
 servel versions <name>                # Available versions
+servel find myapp                    # Find across all servers
+servel find @mydb                    # Find infrastructure only
+servel find --type postgres          # Filter by infra type
 ```
+
+**Build args injected automatically:**
+- `SERVEL_GIT_COMMIT` — Git commit SHA (available during build)
+- `SERVEL_GIT_BRANCH` — Git branch name (available during build)
+- `SERVEL_DEPLOY_TIME` — Deploy timestamp in RFC3339 UTC (always set)
+
+Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dockerfile to persist at runtime.
 
 **Detection priority:** `servel.yaml` → `docker-compose.yml` → `Dockerfile` → preset → Nixpacks
 
@@ -158,6 +172,10 @@ servel infra start db                 # Start
 servel infra stop db                  # Stop
 servel infra rename old new           # Rename
 servel infra rm db                    # Remove
+servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services)
+servel infra check mydb               # Check specific infra
+servel infra sql @mydb schema.sql     # Run SQL file against database
+servel infra sql @mydb "SELECT 1"     # Run inline SQL
 servel link myapp --infra db          # Link → injects DATABASE_URL
 servel unlink myapp --infra db        # Unlink
 servel deps myapp                     # Show dependencies
@@ -173,33 +191,62 @@ servel connect db                     # Quick connect to infra
 - `--alias db-node` — By alias
 - `--label storage=ssd` — By node label
 
-### Server Management
+### Server Management (remote)
+
+`servel server` is aliased to `servel remote`. Both work interchangeably.
 
 ```bash
 servel ssh <server>                   # SSH into server
-servel server status                  # Cluster health (CPU, memory, disk)
-servel server add <name> user@host    # Add server
-servel server list                    # List servers
-servel server use <name>              # Switch default server
-servel server remove <name>           # Remove server
-servel server provision               # Automated setup
-servel server domain set example.com  # Set primary domain
-servel server keys add <name> --key-file pubkey.pub # Add deploy key
-servel node ls                        # List swarm nodes
-servel node add worker user@host      # Add node to cluster
-servel node remove <name>             # Remove node
-servel node promote <name>            # Promote to manager
-servel node health <name>             # Check node health
-servel node specs <name>              # Node specifications
+servel remote status                  # Cluster health (CPU, memory, disk)
+servel remote add <name> user@host    # Add server
+servel remote list                    # List servers
+servel remote use <name>              # Switch default server
+servel remote remove <name>           # Remove server
+servel remote provision               # Automated setup
+servel remote provision --repair      # Repair corrupted keys/services
+servel remote domain set example.com  # Set primary domain
+servel remote keys add <name> --key-file pubkey.pub # Add deploy key
+servel capacity                       # Capacity forecast + recommendations
+servel capacity --json                # JSON output
 servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
+servel doctor --remote KN             # Remote server diagnostics
 servel cleanup                        # Remove expired environments
 servel cleanup --force                # No confirmation
 servel prune                          # Remove dangling images/containers
 servel prune --all                    # Remove unused images/networks/cache
 servel prune --all --volumes          # ⚠️ DATA LOSS: removes unused volumes
+```
+
+### Node Management
+
+```bash
+servel node ls                        # List swarm nodes
+servel node ps                        # Per-node service view (grouped by host)
+servel node ps --node KN-MANAGER      # Filter to specific node
+servel node ps --json                 # JSON output
+servel node add worker user@host      # Add node to cluster
+servel node remove <name>             # Remove node
+servel node promote <name>            # Promote to manager
+servel node health <name>             # Check node health
+servel node specs <name>              # Node specifications
+servel node drain <name>              # Drain for maintenance
+servel node drain <name> --remove     # Drain then remove from cluster
+servel node activate <name>           # Reactivate drained node
+servel node balance --dry-run         # Preview rebalance plan
+servel node balance                   # Execute cluster rebalance
+servel node schedule <name> --at "2026-02-01 03:00"  # One-time drain
+servel node schedule <name> --in 2h   # Relative time drain
+servel node schedule <name> --cron "0 3 * * *"       # Recurring drain
+servel node schedule <name> --cron "0 3 * * *" --reactivate "0 7 * * *"  # Drain + reactivate
+servel node schedule ls               # List scheduled actions
+servel node schedule cancel <name>    # Cancel schedule
+servel node install --all             # Install servel CLI on all workers
+servel node upgrade --all             # Upgrade servel CLI on all nodes
+servel node alias <hostname> <alias>  # Set friendly alias
+servel node label <hostname> key=val  # Add/remove node labels
 ```
 
 ### Secrets
@@ -305,6 +352,7 @@ servel ci init github                 # Initialize GitHub Actions
 servel ci init gitlab                 # Initialize GitLab CI
 servel ci list                        # List pipelines
 servel ci run <config>                # Run built-in CI
+servel ci run <config> --domain x.com # Auto-route CI service
 servel ci status <run-id>             # Check run status
 servel ci logs <run-id>               # View CI logs
 servel ci recent                      # Recent runs
@@ -321,7 +369,23 @@ servel auth whoami                    # Current user info
 servel auth enable <name>             # Enable basic auth
 servel auth disable <name>            # Disable basic auth
 servel access user                    # User management
+servel access user create --name bob --ssh-key key.pub  # Add user with key
+servel access user create --name bob --generate-key     # Generate keypair for user
 servel access role                    # Role management
+servel access setup                   # Initialize access control on server
+servel access setup --rotate-join-key # Rotate join key
+servel access invite bob              # Generate invite token
+servel access join <token>            # Join server with invite token (no prior SSH needed)
+```
+
+### Registry
+
+```bash
+servel registry                       # Browse registry repos
+servel registry tags myapp            # List tags with sizes
+servel registry rm myapp:v1.0         # Delete tag (confirmation required)
+servel registry info                  # Registry info + capabilities
+servel registry du                    # Per-repo disk usage breakdown
 ```
 
 ### Advanced
@@ -332,7 +396,8 @@ servel detect --verbose               # Detailed detection info
 servel init                           # Initialize servel.yaml
 servel validate                       # Validate servel.yaml
 servel upgrade                        # Self-upgrade CLI
-servel upgrade-servers                # Upgrade server binaries
+servel upgrade-servers                # Upgrade servel on all servers
+servel upgrade-servers --remote KN    # Upgrade specific server
 servel audit list                     # View audit logs
 servel audit stats                    # Audit statistics
 servel tag <name> <tag>               # Add tags to deployment
@@ -384,7 +449,7 @@ servel infra restore mydb backup-2024-01-15.sql.gz
 ### CI/CD Deploy Keys
 
 ```bash
-servel server keys add prod --name github-actions --key-file pubkey.pub
+servel remote keys add prod --name github-actions --key-file pubkey.pub
 ```
 
 ### Troubleshoot Routing
@@ -482,7 +547,7 @@ environments:
 | doctor | dr |
 | port-forward | pf |
 | watch | w |
-| server | srv |
+| remote | srv, server |
 | infra | infrastructure |
 | domains | dom |
 | alerts | alert, alrt |
@@ -492,6 +557,10 @@ environments:
 | add | create, new |
 | stats | stat |
 | access | acl |
+| find | search, where |
+| capacity | cap, forecast |
+| registry | reg |
+| redeploy | rd |
 
 ## Troubleshooting
 
@@ -519,7 +588,7 @@ servel inspect <name>                 # Deployment details
 
 ## Project Context Detection
 
-**IMPORTANT:** Before running any servel command for a project, check these local files to understand the deployment context.
+For advanced cases, check these local files to understand the deployment context before running servel commands.
 
 ### .servel/ Directory (Project State)
 
