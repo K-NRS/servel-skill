@@ -12,10 +12,10 @@ Deploy applications and infrastructure to Docker Swarm with Vercel-like simplici
 ```
 Task → What are you trying to do?
 │
-├─ Deploy app → servel deploy
-│   ├─ Need database? → servel add postgres --name db && servel deploy --link-infra db
-│   ├─ Preview/PR? → servel deploy --preview --ttl 24h
-│   └─ Multi-env? → servel deploy --env production
+├─ Deploy app → servel deploy --verbose
+│   ├─ Need database? → servel add postgres --name db && servel deploy --verbose --link-infra db
+│   ├─ Preview/PR? → servel deploy --verbose --preview --ttl 24h
+│   └─ Multi-env? → servel deploy --verbose --env production
 │
 ├─ Add infrastructure → servel add <type> --name <name>
 │   ├─ Bundle? → servel add redis,postgres --prefix app
@@ -60,15 +60,16 @@ servel restart @chatwoot --service sidekiq
 
 ### Deploy
 
+**IMPORTANT: Always use `--verbose` flag when deploying.** It shows full build output, making it much easier to diagnose issues and understand what's happening. Without it, build output is summarized and critical context is lost.
+
 ```bash
-servel deploy                         # Auto-detect & deploy
-servel deploy --preview --ttl 24h     # Preview with cleanup
-servel deploy --link-infra db,redis   # Link infrastructure
-servel deploy --dry-run               # Show plan only
-servel deploy --no-registry           # Skip registry (single-node)
-servel deploy --env staging           # Multi-environment
-servel deploy --verbose               # Full build output
-servel deploy --rebuild               # Force rebuild, skip cache
+servel deploy --verbose               # Auto-detect & deploy (ALWAYS use --verbose)
+servel deploy --verbose --preview --ttl 24h     # Preview with cleanup
+servel deploy --verbose --link-infra db,redis   # Link infrastructure
+servel deploy --verbose --dry-run               # Show plan only
+servel deploy --verbose --no-registry           # Skip registry (single-node)
+servel deploy --verbose --env staging           # Multi-environment
+servel deploy --verbose --rebuild               # Force rebuild, skip cache
 servel deploy --memory 1g --cpu 0.5   # Resource limits
 servel ps                             # List deployments
 servel ps --all-servers               # List across all servers
@@ -112,7 +113,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--no-registry` — Skip registry push
 - `--rebuild` — Force rebuild
 - `--no-smart` — Disable smart detection
-- `--verbose` — Show full build output
+- `--verbose` — Show full build output **(always recommended)**
 - `--env` — Target environment
 - `--build-on <node>` — Build on specific node
 - `--local-build` — Build locally, push to registry
@@ -410,23 +411,23 @@ servel untag <name> <tag>             # Remove tags
 
 ```bash
 servel add postgres --name mydb
-servel deploy --link-infra mydb
+servel deploy --verbose --link-infra mydb
 # App receives DATABASE_URL, DB_HOST, DB_PORT, DB_PASSWORD
 ```
 
 ### Preview Deployments
 
 ```bash
-servel deploy --preview --ttl 24h
+servel deploy --verbose --preview --ttl 24h
 # Returns: https://myapp-pr42.example.com
 ```
 
 ### Multi-Environment
 
 ```bash
-servel deploy --env production
-servel deploy --env staging
-servel deploy --preview
+servel deploy --verbose --env production
+servel deploy --verbose --env staging
+servel deploy --verbose --preview
 ```
 
 ### Debug Container
@@ -566,7 +567,7 @@ environments:
 
 | Issue | Solution |
 |-------|----------|
-| Build fails | `servel logs <name>`, try `--verbose` |
+| Build fails | `servel logs <name>` (deploy should already use `--verbose`) |
 | Port conflict | Use `--port` flag |
 | Domain not working | `servel verify dns <domain>` |
 | SSL issues | `servel verify ssl <domain>` |
