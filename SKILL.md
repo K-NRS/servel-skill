@@ -349,8 +349,10 @@ servel alerts pause 2h                # Maintenance mode (pause alerts)
 ### CI/CD
 
 ```bash
-servel ci init github                 # Initialize GitHub Actions
-servel ci init gitlab                 # Initialize GitLab CI
+servel ci setup                       # Interactive wizard (init + token creation)
+servel ci setup github-actions        # Setup specific provider
+servel ci init github-actions         # Generate workflow only (no token)
+servel ci init gitlab-ci --legacy-ssh # Legacy SSH key-based template
 servel ci list                        # List pipelines
 servel ci run <config>                # Run built-in CI
 servel ci run <config> --domain x.com # Auto-route CI service
@@ -375,8 +377,12 @@ servel access user create --name bob --generate-key     # Generate keypair for u
 servel access role                    # Role management
 servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
-servel access invite bob              # Generate invite token
-servel access join <token>            # Join server with invite token (no prior SSH needed)
+servel access invite --role deployer   # Generate invite token
+servel access invite ls               # List pending invites
+servel access invite revoke <id>      # Revoke invite
+servel access invite rotate <id>      # Rotate token (new token, old revoked)
+servel access invite clean            # Remove expired/used invites
+servel access join <token>            # Join server (idempotent — safe for CI reruns)
 ```
 
 ### Registry
@@ -447,10 +453,46 @@ servel infra backup mydb
 servel infra restore mydb backup-2024-01-15.sql.gz
 ```
 
-### CI/CD Deploy Keys
+### CI/CD Deployment (No SSH Keys in Repo)
+
+**Recommended: Use `servel ci setup` — one command to generate workflow + token.**
 
 ```bash
-servel remote keys add prod --name github-actions --key-file pubkey.pub
+# One-command setup (interactive wizard)
+servel ci setup
+
+# Or step by step:
+# 1. Create a deployer token (on your machine, one-time)
+servel access invite --role deployer --expiry 8760h --uses 10000
+
+# 2. Store token as CI secret (e.g., SERVEL_TOKEN in GitHub Actions)
+
+# 3. In CI pipeline:
+servel access join $SERVEL_TOKEN    # Idempotent — safe for ephemeral CI runners
+servel deploy --verbose             # Deploy
+```
+
+**Why tokens > SSH keys:**
+- No private key material in CI secrets
+- Built-in MITM protection (host fingerprint in token)
+- Built-in expiry + use limits
+- Scoped to deployer role (no shell access)
+- Each join generates ephemeral SSH keypair
+- Idempotent join — reruns don't fail or waste invite uses
+
+**GitHub Actions example:**
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - run: curl -fsSL https://servel.dev/install.sh | bash
+  - run: servel access join ${{ secrets.SERVEL_TOKEN }}
+  - run: servel deploy --verbose
+```
+
+**Token rotation:**
+```bash
+servel access invite rotate <id-prefix>    # New token, old revoked
+servel access setup --rotate-join-key      # Invalidate ALL tokens (emergency)
 ```
 
 ### Troubleshoot Routing
