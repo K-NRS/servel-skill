@@ -10,33 +10,38 @@ Deploy applications and infrastructure to Docker Swarm with Vercel-like simplici
 ## Decision Tree
 
 ```
-Task → What are you trying to do?
-│
-├─ Deploy app → servel deploy --verbose
-│   ├─ Need database? → servel add postgres --name db && servel deploy --verbose --link-infra db
-│   ├─ Preview/PR? → servel deploy --verbose --preview --ttl 24h
-│   └─ Multi-env? → servel deploy --verbose --env production
-│
-├─ Add infrastructure → servel add <type> --name <name>
-│   ├─ Bundle? → servel add redis,postgres --prefix app
-│   ├─ High-availability? → servel add postgres --name db --ha
-│   └─ Link to app? → servel link myapp --infra db
-│
-├─ Debug/inspect → servel logs <name> -f | servel exec <name> sh
-│   └─ Infra? → Use @ prefix: servel logs @mydb -f | servel exec @mydb --service rails sh
-│
-├─ Dev mode → servel dev
-│   └─ Team sync? → servel dev --team
-│
-├─ Find resource → servel find <name>
-│   └─ Infra only? → servel find @<name> --type postgres
-│
-├─ Manage server → servel remote status | servel ssh <server>
-│   └─ Capacity? → servel capacity
-│
-├─ Routing issues → servel traefik status | servel verify dns <domain>
-│
-└─ Backup/restore → servel infra backup <name> | servel infra restore <name> <file>
+Task -> What are you trying to do?
+|
++- Deploy app -> servel deploy --verbose
+|   +- Need database? -> servel add postgres --name db && servel deploy --verbose --link-infra db
+|   +- Preview/PR? -> servel deploy --verbose --preview --ttl 24h
+|   +- Multi-env? -> servel deploy --verbose --env production
+|
++- Add infrastructure -> servel add <type> --name <name>
+|   +- Bundle? -> servel add redis,postgres --prefix app
+|   +- High-availability? -> servel add postgres --name db --ha
+|   +- Link to app? -> servel link myapp --infra db
+|
++- Debug/inspect -> servel logs <name> -f | servel exec <name> sh
+|   +- Infra? -> Use @ prefix: servel logs @mydb -f | servel exec @mydb --service rails sh
+|
++- Dev mode -> servel dev
+|   +- Team sync? -> servel dev --team
+|
++- Find resource -> servel find <name>
+|   +- Infra only? -> servel find @<name> --type postgres
+|
++- Manage server -> servel remote status | servel ssh <server>
+|   +- Capacity? -> servel capacity
+|
++- Routing issues -> servel traefik status | servel verify dns <domain>
+|   +- Debug route? -> servel traefik debug <deployment>
+|
++- Backup/restore -> servel infra backup <name> | servel infra restore <name> <file>
+|
++- Volumes -> servel volumes | servel volumes inspect <name>
+|
++- Audit -> servel audit list | servel audit export --format csv -o audit.csv
 ```
 
 ## Service Addressing (Symbol Prefixes)
@@ -70,7 +75,11 @@ servel deploy --verbose --dry-run               # Show plan only
 servel deploy --verbose --no-registry           # Skip registry (single-node)
 servel deploy --verbose --env staging           # Multi-environment
 servel deploy --verbose --rebuild               # Force rebuild, skip cache
+servel deploy --verbose --new                   # Force new deployment with unique subdomain
+servel deploy --verbose --dashboard             # Real-time TUI dashboard during deploy
+servel deploy --verbose --save                  # Persist flags to servel.yaml
 servel deploy --memory 1g --cpu 0.5   # Resource limits
+servel deploy --quiet                 # Minimal output (only final result)
 servel ps                             # List deployments
 servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
@@ -94,29 +103,38 @@ servel find --type postgres          # Filter by infra type
 ```
 
 **Build args injected automatically:**
-- `SERVEL_GIT_COMMIT` — Git commit SHA (available during build)
-- `SERVEL_GIT_BRANCH` — Git branch name (available during build)
-- `SERVEL_DEPLOY_TIME` — Deploy timestamp in RFC3339 UTC (always set)
+- `SERVEL_GIT_COMMIT` -- Git commit SHA (available during build)
+- `SERVEL_GIT_BRANCH` -- Git branch name (available during build)
+- `SERVEL_DEPLOY_TIME` -- Deploy timestamp in RFC3339 UTC (always set)
 
 Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dockerfile to persist at runtime.
 
-**Detection priority:** `servel.yaml` → `docker-compose.yml` → `Dockerfile` → preset → Nixpacks
+**Detection priority:** `servel.yaml` -> `docker-compose.yml` -> `Dockerfile` -> preset -> Nixpacks
 
-**Smart mode (default):** Detects what changed → config-only (~8s), static-only (~10s), or full build.
+**Smart mode (default):** Detects what changed -> config-only (~8s), static-only (~10s), or full build.
 
 **Key flags:**
-- `--name, -n` — Deployment name
-- `--domain, -d` — Domain for routing
-- `--preview` — Preview environment
-- `--ttl` — Preview lifetime (1h, 6h, 1d, 7d, 2w)
-- `--link-infra` — Link infrastructure (comma-separated)
-- `--no-registry` — Skip registry push
-- `--rebuild` — Force rebuild
-- `--no-smart` — Disable smart detection
-- `--verbose` — Show full build output **(always recommended)**
-- `--env` — Target environment
-- `--build-on <node>` — Build on specific node
-- `--local-build` — Build locally, push to registry
+- `--name, -n` -- Deployment name
+- `--domain, -d` -- Domain for routing
+- `--preview` -- Preview environment
+- `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
+- `--link-infra` -- Link infrastructure (comma-separated)
+- `--no-registry` -- Skip registry push
+- `--rebuild` -- Force rebuild
+- `--no-smart` -- Disable smart detection
+- `--verbose` -- Show full build output **(always recommended)**
+- `--quiet, -q` -- Minimal output (only final result)
+- `--dashboard` -- Real-time TUI dashboard
+- `--env` -- Target environment
+- `--build-on <node>` -- Build on specific node
+- `--local-build` -- Build locally, push to registry
+- `--new` -- Force new deployment with unique subdomain
+- `--converge-timeout <duration>` -- Convergence wait time (default: 5m)
+- `--force-server` -- Suppress server mismatch warnings
+- `--author <name>` -- Override deployment author
+- `--save` -- Persist deploy flags to servel.yaml
+- `--skip-scan` -- Skip vulnerability scanning
+- `--scan-block <severity>` -- Block on severity (critical, high, medium, low)
 
 ### Deploy Aliases
 
@@ -136,8 +154,8 @@ deploy:
       domain: "staging.myapp.com"
 ```
 Usage: `servel deploy preview`, `servel deploy quick`
-- If a directory exists with that name → deploys directory
-- Otherwise → applies alias settings
+- If a directory exists with that name -> deploys directory
+- Otherwise -> applies alias settings
 
 ### Infrastructure (45+ types)
 
@@ -163,6 +181,13 @@ servel add supabase --name supa       # Full platform stack
 servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
 servel infra status                   # Health check all
 servel infra vars db                  # View env vars
+servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
+servel infra domains add db --domain db.example.com  # Add domain alias
+servel infra domains remove db --domain db.example.com
+servel infra labels db --add key=val  # View/modify Docker labels
+servel infra run-hooks db             # Execute lifecycle hooks
+servel infra run-hooks db --init      # Run post-init hooks
+servel infra archives                 # Manage archived credentials
 servel logs @db -f                    # Follow infra logs (@ prefix)
 servel logs @chatwoot --service rails -f  # Multi-service infra logs
 servel infra backup db                # Backup
@@ -177,7 +202,7 @@ servel infra check                    # Diagnose all (orphaned constraints, port
 servel infra check mydb               # Check specific infra
 servel infra sql @mydb schema.sql     # Run SQL file against database
 servel infra sql @mydb "SELECT 1"     # Run inline SQL
-servel link myapp --infra db          # Link → injects DATABASE_URL
+servel link myapp --infra db          # Link -> injects DATABASE_URL
 servel unlink myapp --infra db        # Unlink
 servel deps myapp                     # Show dependencies
 servel connect db                     # Quick connect to infra
@@ -188,9 +213,9 @@ servel connect db                     # Quick connect to infra
 **Lifecycle hooks:** Some templates auto-run setup commands on first deploy (e.g., Chatwoot runs `db:chatwoot_prepare`).
 
 **Node pinning:**
-- `--node hostname` — By hostname
-- `--alias db-node` — By alias
-- `--label storage=ssd` — By node label
+- `--node hostname` -- By hostname
+- `--alias db-node` -- By alias
+- `--label storage=ssd` -- By node label
 
 ### Server Management (remote)
 
@@ -218,7 +243,7 @@ servel cleanup                        # Remove expired environments
 servel cleanup --force                # No confirmation
 servel prune                          # Remove dangling images/containers
 servel prune --all                    # Remove unused images/networks/cache
-servel prune --all --volumes          # ⚠️ DATA LOSS: removes unused volumes
+servel prune --all --volumes          # DATA LOSS: removes unused volumes
 ```
 
 ### Node Management
@@ -280,10 +305,14 @@ servel routes <name>                  # Show deployment routes
 
 ```bash
 servel traefik status                 # Router status
+servel traefik status --history       # With historical events
 servel traefik logs                   # Traefik logs
+servel traefik logs -f --level error  # Follow with level filter
+servel traefik logs --since 1h -n 100 # Recent logs with tail count
 servel traefik routes <name>          # Detailed route info
 servel traefik certs                  # SSL certificate info
 servel traefik test <domain>          # Test domain routing
+servel traefik debug <deployment>     # Debug routing config for a deployment
 servel traefik restart                # Restart Traefik
 ```
 
@@ -382,7 +411,7 @@ servel access invite ls               # List pending invites
 servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
-servel access join <token>            # Join server (idempotent — safe for CI reruns)
+servel access join <token>            # Join server (idempotent -- safe for CI reruns)
 ```
 
 ### Registry
@@ -395,6 +424,43 @@ servel registry info                  # Registry info + capabilities
 servel registry du                    # Per-repo disk usage breakdown
 ```
 
+### Volumes
+
+```bash
+servel volumes                        # List all volumes
+servel volumes --dangling             # Unused volumes (Links=0)
+servel volumes --orphaned             # Volumes whose owner was deleted
+servel volumes --json                 # JSON output
+servel volumes inspect <name>         # Detailed volume information
+```
+
+### Audit
+
+```bash
+servel audit list                     # View audit logs (default)
+servel audit list --user bob --since 7d  # Filter by user and time
+servel audit list --app myapp --severity high --details  # With details
+servel audit stats                    # Action counts, failure rates
+servel audit export --format csv -o audit.csv  # Export to CSV/JSON
+servel audit export --format json -o audit.json --since 30d
+servel audit rotate --keep-days 90    # Retention policy (default: 90 days)
+```
+
+### Bastion (SSH Gateway)
+
+```bash
+servel bastion start                  # Start bastion server
+servel bastion start --listen :2222   # Custom listen address
+servel bastion restart                # Restart bastion
+servel bastion install --start        # Install as systemd service
+servel bastion uninstall              # Remove systemd service
+servel bastion session list           # List recorded sessions
+servel bastion session play <id>      # Playback recorded session
+servel bastion session play <id> --speed 2.0  # Fast playback
+servel bastion session info <id>      # Session metadata
+servel bastion session commands <id>  # Extract commands from session
+```
+
 ### Advanced
 
 ```bash
@@ -405,10 +471,16 @@ servel validate                       # Validate servel.yaml
 servel upgrade                        # Self-upgrade CLI
 servel upgrade-servers                # Upgrade servel on all servers
 servel upgrade-servers --remote KN    # Upgrade specific server
-servel audit list                     # View audit logs
-servel audit stats                    # Audit statistics
 servel tag <name> <tag>               # Add tags to deployment
 servel untag <name> <tag>             # Remove tags
+servel reconcile                      # Discover/fix unlabeled services and missing state
+servel reconcile --dry-run            # Preview reconciliation
+servel reconcile --deployments        # Only deployments
+servel reconcile --infra              # Only infrastructure
+servel queue clean                    # Force cleanup stale build queue entries
+servel telemetry                      # Show telemetry status
+servel telemetry enable               # Enable anonymous telemetry
+servel telemetry disable              # Disable anonymous telemetry
 ```
 
 ## Common Workflows
@@ -455,7 +527,7 @@ servel infra restore mydb backup-2024-01-15.sql.gz
 
 ### CI/CD Deployment (No SSH Keys in Repo)
 
-**Recommended: Use `servel ci setup` — one command to generate workflow + token.**
+**Recommended: Use `servel ci setup` -- one command to generate workflow + token.**
 
 ```bash
 # One-command setup (interactive wizard)
@@ -468,7 +540,7 @@ servel access invite --role deployer --expiry 8760h --uses 10000
 # 2. Store token as CI secret (e.g., SERVEL_TOKEN in GitHub Actions)
 
 # 3. In CI pipeline:
-servel access join $SERVEL_TOKEN    # Idempotent — safe for ephemeral CI runners
+servel access join $SERVEL_TOKEN    # Idempotent -- safe for ephemeral CI runners
 servel deploy --verbose             # Deploy
 ```
 
@@ -478,7 +550,7 @@ servel deploy --verbose             # Deploy
 - Built-in expiry + use limits
 - Scoped to deployer role (no shell access)
 - Each join generates ephemeral SSH keypair
-- Idempotent join — reruns don't fail or waste invite uses
+- Idempotent join -- reruns don't fail or waste invite uses
 
 **GitHub Actions example:**
 ```yaml
@@ -501,34 +573,68 @@ servel access setup --rotate-join-key      # Invalidate ALL tokens (emergency)
 servel verify dns app.example.com     # Check DNS
 servel verify ssl app.example.com     # Check SSL
 servel traefik test app.example.com   # Test routing
+servel traefik debug myapp            # Debug routing config
 servel traefik logs                   # View Traefik logs
 ```
 
 ## Configuration (servel.yaml)
 
+### Complete Reference
+
 ```yaml
 name: myapp
 domain: app.example.com
+domains:                              # Multiple domains
+  - app.example.com
+  - api.example.com
+port: 3000
 
-build:
-  preset: bun                         # bun, node, python, go
-  dockerfile: Dockerfile
-  buildCommand: bun run build
-  startCommand: bun run start
+# Cloudflare proxy support
+cloudflare: true                      # Skip HTTPS redirect (prevents redirect loops with Flexible SSL)
+www: redirect                         # WWW handling: "redirect" (www->apex), "redirect-to-www" (apex->www)
 
+# Environment
 env:
   NODE_ENV: production
-
+env_file: ".env"                      # Load from file (excludes .env.local patterns)
 secrets:
   - API_KEY
   - DB_PASSWORD
 
+# Build configuration
+build:
+  preset: bun                         # bun, node, python, go
+  dockerfile: Dockerfile
+  context: "./app"                    # Build context directory (default: .)
+  compose: docker-compose.yml         # Compose file path
+  service: web                        # Service name for compose (when multiple)
+  buildCommand: bun run build
+  startCommand: bun run start
+  installCommand: pnpm install --frozen-lockfile  # Override install (Nixpacks)
+  outputDirectory: dist               # Static file output dir
+  workspace: apps/web                 # Monorepo workspace target
+  args:                               # Docker build args
+    NODE_ENV: production
+    BUILD_DATE: "2024-01-15"
+  cache_invalidate:                   # Additional cache invalidation patterns
+    - "content/**"
+    - "public/**/*.md"
+
+# Resources & scaling
 resources:
   memory: 512M
   cpus: 0.5
-
 replicas: 2
+node: manager-1                       # Pin to specific node hostname
 
+# Placement constraints
+placement:
+  strategy: manager_only              # any, manager_only, spread
+  constraints:
+    - "node.role==manager"
+    - "node.labels.storage==ssd"
+
+# Health checks
 healthcheck:
   type: http                          # http, tcp, cmd, none
   path: /health
@@ -536,43 +642,245 @@ healthcheck:
   timeout: 10s
   retries: 3
 
+# Update strategy
 update:
   order: start-first                  # start-first, stop-first
   failure_action: rollback            # rollback, pause, continue
+  parallelism: 2                      # Tasks updated at once (default: 1)
+  delay: "10s"                        # Delay between updates (default: 5s)
+  convergence_timeout: "10m"          # Max wait for convergence (default: 5m)
+  retry:                              # Automatic retry on failure
+    enabled: true
+    max_attempts: 5                   # Default: 3
+    initial_interval: "30s"
+    max_interval: "5m"
+    retryable_errors:
+      - "connection refused"
+      - "timeout"
 
+# Infrastructure links
 infra:
   - name: mydb
-    prefix: DB                        # → DB_HOST, DB_PORT, DB_PASSWORD
+    prefix: DB                        # -> DB_HOST, DB_PORT, DB_PASSWORD
 
+# Infrastructure auto-creation
+requires:
+  critical:                           # Must exist before deploy
+    - postgres
+    - redis: shared-redis             # With custom name
+    - postgres:                       # With full config
+        name: mydb
+        timeout: 10m
+        resources:
+          memory: 2GB
+          storage: 20GB
+  optional:                           # Created if missing, deploy continues without
+    - meilisearch
+
+# Routes (advanced multi-domain/path routing)
 routes:
-  - type: http
+  - type: http                        # http, tcp, udp, redirect
     domain: app.example.com
     port: 3000
+    cloudflare: true                  # Per-route Cloudflare proxy support
+    auth:                             # Per-route authentication
+      type: basic
+      username: admin
+      password: "${ADMIN_PASSWORD}"   # Supports env var expansion
+      rules:                          # Path-based auth rules
+        - paths: ["/admin/*"]
+          username: admin
+          password: "${ADMIN_PASSWORD}"
+        - paths: ["/api/*"]
+          username: api_user
+          password: "${API_PASSWORD}"
+    middlewares:                       # Per-route middleware override
+      rate_limit:
+        average: 100
   - type: http
     domain: api.example.com
-    path: /v1/*
+    path: /v1/*                       # Path-based routing
     port: 3001
+  - type: redirect                    # Domain redirect
+    domain: old.example.com
+    redirect_to: new.example.com
+    permanent: true                   # 301 (true) or 302 (false)
+  - type: tcp                         # TCP passthrough
+    expose: 5432                      # External port
+    port: 5432
 
+# Middlewares (Traefik middleware configuration)
+middlewares:
+  rate_limit:
+    average: 100
+    burst: 50
+  ip_allowlist:
+    - "10.0.0.0/8"
+    - "192.168.1.0/24"
+  cors:
+    origins: ["https://app.example.com"]
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    headers: ["Content-Type", "Authorization"]
+    exposed_headers: ["X-Total-Count"]
+    max_age: 3600
+    credentials: true
+  compress:
+    enabled: true
+    excluded_content_types: ["image/png", "image/jpeg"]
+    min_response_body_bytes: 1024
+  security_headers:
+    preset: strict                    # "strict" or "relaxed" presets
+    # OR custom:
+    sts_seconds: 31536000
+    sts_include_subdomains: true
+    sts_preload: false
+    frame_options: "DENY"
+    content_type_nosniff: true
+    csp: "default-src 'self'; script-src 'self' 'unsafe-inline'"
+    referrer_policy: "strict-origin-when-cross-origin"
+    permissions_policy: "camera=(), microphone=()"
+  headers:
+    request:
+      X-Custom-Header: "value"
+    response:
+      X-Powered-By: "Servel"
+      Cache-Control: "public, max-age=3600"
+  request_limit:
+    max_body_size: "10MB"
+  timeouts:
+    read: "60s"
+    write: "60s"
+    idle: "90s"
+    response_forwarding_flush_interval: "100ms"
+  retry:
+    attempts: 3
+    initial_interval: "100ms"
+  circuit_breaker:
+    expression: "NetworkErrorRatio() > 0.5"
+    check_period: "10s"
+    fallback_duration: "30s"
+    recovery_duration: "10s"
+  sticky_sessions:
+    cookie_name: "srv_session"
+    secure: true
+    http_only: true
+    same_site: "Lax"
+  redirects:                          # Path-based redirects
+    - from: "/old-path"
+      to: "/new-path"
+      permanent: true
+    - from: "/blog/(.*)"
+      to: "/articles/$1"
+
+# Authentication
+auth:
+  type: basic                         # basic, none
+  username: admin
+  password: "${AUTH_PASSWORD}"
+  rules:                              # Path-based rules
+    - paths: ["/admin/*"]
+      username: admin
+      password: "${ADMIN_PASSWORD}"
+
+# Persistent storage
 persist:
   - /app/data
   - /app/uploads
 
+# Volumes (advanced mount configuration)
+volumes:
+  - source: ./data
+    target: /app/data
+    type: bind                        # bind (default), volume
+    readonly: false
+    consistency: local                # "local" (default) or "strong" (DRBD replication)
+    replicas: 2                       # For consistency=strong
+
+# Tags & networking
+tags: ["production", "critical"]
+network: per-project                  # per-project (default), by-tag, global, or custom name
+
+# Custom actions (run commands in containers)
+actions:
+  migrate:
+    command: npx prisma migrate deploy
+    output: migration.log
+    outputs: [types.ts, schema.ts]
+    env: ["MIGRATION_ENV=prod"]
+    workdir: /app
+    service: api                      # For multi-service compose
+    user: app
+  seed:
+    command: npm run seed
+
+# Deploy configuration
+deploy:
+  local: true                         # Skip registry, use local images
+  no_cache: true                      # Disable build cache
+  pull: true                          # Always pull latest base images
+  no_cleanup: true                    # Skip cleanup of old images
+  skip_build: true                    # Skip build, use pre-built output
+  fast: true                          # Fast mode: skip convergence, minimal delay
+  build_memory: "4g"                  # Build memory limit
+  build_cpus: 2.0                     # Build CPU limit
+  build_timeout: "1h"                 # Build timeout (default: 30m)
+  registry: "docker.io"              # Named registry
+  registry_path: "myorg/myproject"   # Override image path
+  include:                            # Override exclusions
+    - ".next"
+    - "dist"
+  aliases:
+    preview:
+      ttl: "7d"
+      domain: "{branch}.preview.myapp.com"
+      no_index: true
+      build_memory: "2g"
+      memory: "512M"
+      verbose: true
+    quick:
+      fast: true
+      local: true
+
+# Dev mode settings
 dev:
   command: bun run dev
   port: 3000
+  domain: myapp-dev.local             # Custom dev domain
+  dockerfile: Dockerfile.dev          # Dev-specific Dockerfile
+  compose: docker-compose.dev.yml     # Dev-specific compose
+  service: web                        # Compose service name
+  build_method: nixpacks              # Force: nixpacks, dockerfile, compose, auto
+  env:
+    DEBUG: "1"
+    LOG_LEVEL: debug
+  nixpacks:                           # Nixpacks overrides
+    provider: node
+    node_version: "20"
+    install_cmd: "pnpm install"
+    build_cmd: "pnpm build"
+    start_cmd: "pnpm dev"
   sync:
     ignore:
       - "*.log"
+      - "node_modules"
       - ".cache"
 
+# Multi-environment overrides
 environments:
   production:
     domain: myapp.com
     replicas: 5
+    branches: ["main"]                # Auto-deploy from these branches
+    auth:                             # Environment-specific auth
+      type: basic
+      username: admin
   staging:
     domain: staging.myapp.com
+    branches: ["develop"]
+    noIndex: true                     # Prevent search indexing
   preview:
-    ttl: 7d
+    ttl: 7d                           # Auto-cleanup for branch deploys
+    domain: "{branch}.preview.myapp.com"
 ```
 
 ## Aliases
@@ -604,6 +912,7 @@ environments:
 | capacity | cap, forecast |
 | registry | reg |
 | redeploy | rd |
+| reconcile | sync |
 
 ## Troubleshooting
 
@@ -615,8 +924,11 @@ environments:
 | SSL issues | `servel verify ssl <domain>` |
 | Container exits | Check start command and port |
 | Smart mode wrong | Use `--no-smart` for full rebuild |
-| Routing broken | `servel traefik test <domain>` |
+| Routing broken | `servel traefik test <domain>` then `servel traefik debug <name>` |
 | Health check fails | `servel verify health <name>` |
+| Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR set Cloudflare SSL to Full (strict) |
+| Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
+| Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
 
 **Diagnostic commands:**
 ```bash
@@ -625,8 +937,11 @@ servel verify health <name>           # Health check
 servel verify dns <domain>            # DNS check
 servel verify ssl <domain>            # SSL check
 servel traefik status                 # Routing status
+servel traefik debug <name>           # Debug specific routing
 servel logs <name>                    # View logs
 servel inspect <name>                 # Deployment details
+servel reconcile --dry-run            # Find state mismatches
+servel audit list --severity high     # Recent high-severity events
 ```
 
 ## Project Context Detection
@@ -638,25 +953,25 @@ For advanced cases, check these local files to understand the deployment context
 Located at `<project-root>/.servel/`. Created automatically after first deploy. Contains deployment state that tells you **which server** this project deploys to and its current configuration.
 
 **Files:**
-- `.servel/state.json` — Production environment state
-- `.servel/state.<env>.json` — Other environment states (e.g., `state.staging.json`)
+- `.servel/state.json` -- Production environment state
+- `.servel/state.<env>.json` -- Other environment states (e.g., `state.staging.json`)
 
 **State file structure:**
 ```json
 {
   "version": 1,
-  "server": "KN",                    // ← Which server this deploys to
-  "server_fingerprint": "uuid-...",  // Stable ID (survives server renames)
+  "server": "KN",
+  "server_fingerprint": "uuid-...",
   "deployment_id": "myapp",
   "environment": "production",
-  "build_type": "dockerfile",        // dockerfile, compose, nixpacks
+  "build_type": "dockerfile",
   "project_name": "myapp",
-  "domain": "myapp.example.com",     // Saved domain (non-config projects)
-  "install_command": "",             // Vercel-style overrides
+  "domain": "myapp.example.com",
+  "install_command": "",
   "build_command": "",
   "start_command": "",
   "port": "",
-  "runtime": "",                     // node or bun (for Nixpacks JS/TS)
+  "runtime": "",
   "tags": [],
   "network_mode": "",
   "network_name": ""
@@ -676,86 +991,21 @@ ls .servel/state*.json  # See all deployed environments
 
 ### servel.yaml (Project Configuration)
 
-Located at `<project-root>/servel.yaml`. Defines how the project should be built and deployed. This is the **declarative config** — checked into version control.
-
-**Key fields for context:**
-```yaml
-name: myapp                          # Deployment name
-domain: app.example.com              # Primary domain
-domains:                             # Multiple domains
-  - app.example.com
-  - api.example.com
-port: 3000                           # Container port
-
-build:
-  preset: bun                        # bun, node, python, go
-  dockerfile: Dockerfile
-  buildCommand: bun run build
-  startCommand: bun run start
-
-env:
-  NODE_ENV: production
-secrets:
-  - API_KEY
-
-resources:
-  memory: 512M
-  cpus: 0.5
-replicas: 2
-
-infra:                               # Linked infrastructure
-  - name: mydb
-    prefix: DB                       # → DB_HOST, DB_PORT, DB_PASSWORD
-
-routes:                              # Advanced routing
-  - type: http
-    domain: app.example.com
-    port: 3000
-
-persist:                             # Persistent storage paths
-  - /app/data
-
-environments:                        # Multi-environment overrides
-  production:
-    domain: myapp.com
-    replicas: 5
-  staging:
-    domain: staging.myapp.com
-
-deploy:
-  aliases:                           # Deploy presets
-    preview:
-      ttl: "0"
-      domain: "{branch}.preview.myapp.com"
-    quick:
-      fast: true
-      local: true
-
-middlewares:                          # Traefik middleware config
-  rate_limit:
-    average: 100
-    burst: 50
-
-dev:                                 # Dev mode settings
-  command: bun run dev
-  port: 3000
-```
-
-**Detection priority:** `servel.yaml` → `docker-compose.yml` → `Dockerfile` → preset → Nixpacks
+Located at `<project-root>/servel.yaml`. Defines how the project should be built and deployed. This is the **declarative config** -- checked into version control. See the [Complete Reference](#complete-reference) section above for all available fields.
 
 ### Putting It Together
 
 When working with a servel-managed project:
-1. **Check `.servel/state.json`** → Know which server, deployment name, and environment
-2. **Check `servel.yaml`** → Know build config, domains, infra links, resources
-3. **No `.servel/` dir** → Project not yet deployed (use `servel deploy` first)
-4. **No `servel.yaml`** → Auto-detected project (Dockerfile/compose/preset)
+1. **Check `.servel/state.json`** -> Know which server, deployment name, and environment
+2. **Check `servel.yaml`** -> Know build config, domains, infra links, resources
+3. **No `.servel/` dir** -> Project not yet deployed (use `servel deploy` first)
+4. **No `servel.yaml`** -> Auto-detected project (Dockerfile/compose/preset)
 
 Example workflow:
 ```
 # Understand current project deployment
-cat .servel/state.json          # → server: "KN", project_name: "myapp"
-cat servel.yaml                 # → domain, infra links, build config
+cat .servel/state.json          # -> server: "KN", project_name: "myapp"
+cat servel.yaml                 # -> domain, infra links, build config
 
 # Now you know: myapp is deployed on KN server
 servel logs myapp               # View logs
