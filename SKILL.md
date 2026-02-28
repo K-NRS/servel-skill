@@ -61,6 +61,31 @@ servel logs @supabase --service postgres -f
 servel restart @chatwoot --service sidekiq
 ```
 
+## Server Targeting (`--remote`)
+
+The `--remote` flag is a **global flag** available on ALL commands. It targets a specific server instead of the default.
+
+```bash
+servel ps --remote KN              # List deployments on KN server
+servel logs myapp --remote KN      # View logs on specific server
+servel infra --remote tominance    # List infra on tominance
+servel exec @mydb sh --remote KN   # Shell into infra on specific server
+servel deploy --remote staging-srv # Deploy to non-default server
+```
+
+**When to use `--remote`:**
+- The project has no `.servel/state.json` (not yet deployed, so no default server context)
+- Targeting a server different from the default (`servel remote use <name>`)
+- Running cross-server commands like `servel find` or `servel ps`
+- Managing infrastructure on a specific server
+
+**When NOT needed:**
+- Inside a project directory with `.servel/state.json` — servel auto-detects the server
+- After running `servel remote use <name>` to set a default
+- Commands that already specify the server (e.g., `servel ssh KN`)
+
+**Tip:** Use `servel remote list` to see available remotes, `servel remote use <name>` to change default.
+
 ## Quick Reference
 
 ### Deploy
