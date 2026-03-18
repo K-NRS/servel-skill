@@ -378,13 +378,16 @@ servel port-forward db 5432           # Forward remote port locally
 ### Environment Variables
 
 ```bash
-servel env set <name> KEY=VALUE       # Set env var
-servel env vars <name>                # Show env vars
+servel env set <name> KEY=VALUE       # Set env var (no rebuild, restarts service)
+servel env vars <name>                # Show env vars (secrets masked)
 servel env list                       # List environments
 servel config show <name>             # Show deployment config
 servel config sync <name>             # Sync config to servel.yaml
 servel config sync --dry-run          # Preview sync
+servel set-env-file .env              # Set env_file in servel.yaml (.local rejected)
 ```
+
+**Note:** `servel deploy` auto-reads `.env` + `.env.local` from project dir and injects as Docker env vars. This is NOT persistent — vars are re-sent each deploy. For persistent encrypted storage, use `servel secrets`. See [Environment Variables & Secrets](#environment-variables--secrets) workflow for full details.
 
 ### Alerts
 
@@ -532,6 +535,45 @@ servel deploy --verbose --env production
 servel deploy --verbose --env staging
 servel deploy --verbose --preview
 ```
+
+### Environment Variables & Secrets
+
+**How `servel deploy` handles .env files:**
+- Reads `.env` (base) then `.env.local` (override) from the project directory
+- Injects them as **Docker service environment variables** (not servel secrets)
+- Vars are sent on every deploy — if you delete `.env.local`, those vars won't be in the next deploy
+- `.env.local` is auto-detected and takes priority when present
+- `.env` files are **excluded from the deployment package** (never uploaded to the server as files)
+
+**This is NOT automatic migration to secrets.** The vars live as plain Docker service env vars unless you explicitly use secrets:
+
+```bash
+# Option 1: servel.yaml env block (fine for non-secret config)
+# env:
+#   NODE_ENV: production
+#   API_URL: https://api.example.com
+
+# Option 2: servel secrets (encrypted, persistent, recommended for API keys)
+servel secrets set myapp API_KEY=xxx
+servel secrets set myapp DB_PASSWORD=yyy
+
+# Option 3: Auto-detect sensitive vars during deploy
+servel deploy --verbose --migrate-secrets
+# Detects *_KEY, *_SECRET, *_PASSWORD patterns → prompts to encrypt
+
+# Option 4: servel.yaml secrets block (keys loaded from .env at deploy time)
+# secrets:
+#   - API_KEY        # Value pulled from .env/.env.local during deploy
+#   - DB_PASSWORD    # If not in .env, assumed already on server (encrypted)
+```
+
+**Priority (highest wins):** servel secrets > servel.yaml `env:` > `env_file:` > `.env`/`.env.local`
+
+**Important distinctions:**
+- `env_file:` in servel.yaml rejects `.local` files (dev-only convention)
+- `servel set-env-file .env` — convenience command to set `env_file` in servel.yaml
+- `servel env set myapp KEY=VALUE` — update env var on running deployment without rebuild
+- NEXT_PUBLIC_* vars are kept in build-time env AND runtime (Next.js needs them at build time)
 
 ### Debug Container
 
