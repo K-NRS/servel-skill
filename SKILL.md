@@ -112,9 +112,16 @@ servel logs <name> -f                 # Follow logs
 servel watch <name>                   # Watch deploy progress (TUI)
 servel rm <name>                      # Remove
 servel rollback <name>                # Rollback version
+servel promote <src> <tgt>            # Promote deployment (env + domains)
+servel promote src tgt --swap         # Bidirectional domain swap
+servel promote src tgt --dry-run      # Preview promotion plan
+servel promote src tgt --merge-env    # Merge env vars (vs replace)
+servel promote src tgt --rebuild      # Rebuild after (NEXT_PUBLIC_*)
+servel promote src tgt --cleanup-source  # Remove source after
 servel scale <name> 3                 # Scale replicas
+servel scale <name> 0                 # Scale to 0 (same as stop)
 servel restart <name>                 # Restart deployment
-servel stop <name>                    # Stop deployment
+servel stop <name>                    # Stop deployment (scales to 0)
 servel start <name>                   # Start stopped deployment
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
@@ -207,6 +214,8 @@ servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
 servel infra status                   # Health check all
 servel infra vars db                  # View env vars
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
+servel infra upgrade db --image postgres:16  # Safely upgrade image (auto-backup + health check)
+servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upgrade specific service
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
@@ -220,7 +229,8 @@ servel infra restore db backup.sql.gz # Restore
 servel infra rotate db                # Rotate credentials
 servel infra restart db --force       # Force restart
 servel infra start db                 # Start
-servel infra stop db                  # Stop
+servel infra stop db                  # Stop (scales to 0)
+servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
 servel infra rm db                    # Remove
 servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services)
