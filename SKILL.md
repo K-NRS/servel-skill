@@ -37,6 +37,12 @@ Task -> What are you trying to do?
 +- Routing issues -> servel traefik status | servel verify dns <domain>
 |   +- Debug route? -> servel traefik debug <deployment>
 |
++- Run DB migrations -> servel infra sql @<name> ./migrations
+|   +- Single file? -> servel infra sql @<name> schema.sql
+|   +- Supabase? -> servel infra sql @<name> ./supabase/migrations --service db
+|   +- Preview first? -> servel infra sql @<name> ./migrations --dry-run
+|   +- ORM migration? -> servel infra run <name> migrate (if action defined)
+|
 +- Backup/restore -> servel infra backup <name> | servel infra restore <name> <file>
 |
 +- Volumes -> servel volumes | servel volumes inspect <name>
@@ -257,12 +263,20 @@ servel infra rm db                    # Remove
 servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services)
 servel infra check mydb               # Check specific infra
 servel infra sql @mydb schema.sql     # Run SQL file against database
+servel infra sql @mydb ./migrations   # Run all .sql files in directory (alphabetical order)
 servel infra sql @mydb "SELECT 1"     # Run inline SQL
+servel infra sql @mydb schema.sql --dry-run  # Preview without executing
+servel infra sql @supabase migration.sql --service db  # Supabase (targets db service)
+servel infra sql @mydb ./migrations --track      # Tracked migrations (skip applied)
+servel infra sql @mydb ./migrations --track --status  # Show migration status
+servel infra sql @mydb ./migrations --track --force   # Re-apply changed migrations
 servel link myapp --infra db          # Link -> injects DATABASE_URL
 servel unlink myapp --infra db        # Unlink
 servel deps myapp                     # Show dependencies
 servel connect db                     # Quick connect to infra
 ```
+
+**Database Migrations:** Use `servel infra sql` — this is the canonical way to run SQL migrations against any database infrastructure. Supports PostgreSQL, MySQL, MariaDB, CockroachDB, and Supabase. When given a directory, runs all `.sql` files in alphabetical order (prefix with `001_`, `002_`, etc.). For Supabase, uses `supabase_admin` superuser on the `-db` service. For ORM migrations (Prisma, Drizzle), use `servel infra run <name> migrate` if a custom action is defined, or run via `servel exec`.
 
 **Linking injects:** DATABASE_URL, REDIS_URL, MONGODB_URI, etc. based on infrastructure type.
 
@@ -934,6 +948,21 @@ actions:
         default: "./supabase/functions"
     command: ls /home/deno/functions/
     confirm: "Upload functions?"
+  gen-types:                           # Supabase: download OpenAPI schema
+    service: rest
+    command: curl -s http://localhost:3000/
+    output: openapi.json
+  create-bucket:                       # Supabase: create storage bucket
+    service: storage
+    command: create-bucket
+    vars:
+      - name: BucketName
+  list-users:                          # Supabase: list auth users
+    service: auth
+    command: list-users
+  db-size:                             # Supabase: database size report
+    service: db
+    command: psql -U postgres -c "SELECT pg_size_pretty(pg_database_size(current_database()))"
 
 # Deploy configuration
 deploy:
