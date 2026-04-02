@@ -219,6 +219,10 @@ servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upg
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
+servel infra run @db                  # List available actions
+servel infra run @db psql             # Run action (e.g. interactive shell)
+servel infra run @mysupabase deploy-functions ./supabase/functions  # Upload files + run
+servel infra run @db schema --dry-run # Preview action
 servel infra run-hooks db             # Execute lifecycle hooks
 servel infra run-hooks db --init      # Run post-init hooks
 servel infra archives                 # Manage archived credentials
@@ -889,6 +893,16 @@ actions:
     user: app
   seed:
     command: npm run seed
+  deploy-functions:                   # Upload files to container before running
+    service: functions
+    inputs:
+      - source: "{{.FunctionsDir}}"
+        target: /home/deno/functions
+    vars:
+      - name: FunctionsDir
+        default: "./supabase/functions"
+    command: ls /home/deno/functions/
+    confirm: "Upload functions?"
 
 # Deploy configuration
 deploy:

@@ -573,9 +573,29 @@ actions:
     service: db
     command: pg_dump -s postgres
     description: Dump schema
+
+  deploy-functions:
+    service: functions
+    description: Upload edge functions
+    vars:
+      - name: FunctionsDir
+        default: "./supabase/functions"
+    inputs:
+      - source: "{{.FunctionsDir}}"
+        target: /home/deno/functions
+    command: ls /home/deno/functions/
+    confirm: "Upload functions?"
 ```
 
-Usage: `servel infra run @name action`
+Action fields: `service`, `command`, `description`, `interactive`, `user`, `workdir`, `output`, `outputs`, `inputs`, `vars`, `env`, `confirm`
+
+**inputs** upload local files/dirs to the container before command execution:
+- `source`: local path (supports `{{.VarName}}` templates)
+- `target`: absolute container path
+
+**vars** define user-provided variables via `--var Name=value` or positional args.
+
+Usage: `servel infra run @name action [args...]`
 
 ### Config Files
 
