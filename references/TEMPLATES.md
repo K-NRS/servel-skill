@@ -595,7 +595,7 @@ Action fields: `service`, `command`, `description`, `interactive`, `user`, `work
 
 **vars** define user-provided variables via `--var Name=value` or positional args.
 
-Usage: `servel infra run @name action [args...]`
+Usage: `servel infra run name action [args...]`
 
 ### Config Files
 
@@ -851,7 +851,7 @@ servel add mydb --name test --dry-run
 
 On deployment, critical template fields are cached in `spec.json`:
 - `rotatable_credentials` - For offline credential rotation
-- `actions` - For `servel infra run @name action`
+- `actions` - For `servel infra run name action`
 - `post_restore` - For backup restore hooks
 - `post_init` - For lifecycle hooks
 - `deployment_stages` - For staged deployment tracking

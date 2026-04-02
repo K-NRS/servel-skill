@@ -44,6 +44,23 @@ Task -> What are you trying to do?
 +- Audit -> servel audit list | servel audit export --format csv -o audit.csv
 ```
 
+## Project Context (Auto-Detection)
+
+**When inside a project directory with `.servel/state.json`, you don't need to pass the deployment name.** Servel auto-detects the project from local state:
+
+```bash
+# Inside a project with .servel/state.json:
+servel logs -f              # No name needed — uses project context
+servel inspect              # Same
+servel env vars             # Same
+servel deploy --verbose     # Deploys current project to its known server
+
+# Outside a project (or targeting a different deployment):
+servel logs myapp -f        # Explicit name required
+```
+
+This applies to: `logs`, `exec`, `inspect`, `env`, `restart`, `stop`, `start`, `scale`, `redeploy`, `rollback`, `rm`, `deploy`, and most service-targeting commands.
+
 ## Service Addressing (Symbol Prefixes)
 
 Most commands that target a service (exec, logs, inspect, stats, restart, stop, start, scale, env, remove) support symbol prefixes:
@@ -219,10 +236,10 @@ servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upg
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
-servel infra run @db                  # List available actions
-servel infra run @db psql             # Run action (e.g. interactive shell)
-servel infra run @mysupabase deploy-functions ./supabase/functions  # Upload files + run
-servel infra run @db schema --dry-run # Preview action
+servel infra run db                  # List available actions
+servel infra run db psql             # Run action (e.g. interactive shell)
+servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
+servel infra run db schema --dry-run # Preview action
 servel infra run-hooks db             # Execute lifecycle hooks
 servel infra run-hooks db --init      # Run post-init hooks
 servel infra archives                 # Manage archived credentials
@@ -317,10 +334,9 @@ servel node label <hostname> key=val  # Add/remove node labels
 ### Secrets
 
 ```bash
-servel secrets set API_KEY            # Set (prompted input)
-servel secrets set API_KEY "value"    # Set with value
+servel secrets set API_KEY            # Set (interactive prompt, never pass values inline)
 servel secrets list                   # List keys
-servel secrets get API_KEY            # Get value
+servel secrets get API_KEY            # Get value (output is masked by default)
 servel secrets rm API_KEY             # Remove
 servel secrets rotate API_KEY         # Rotate
 servel secrets backup                 # Backup all secrets
@@ -568,8 +584,8 @@ servel deploy --verbose --preview
 #   API_URL: https://api.example.com
 
 # Option 2: servel secrets (encrypted, persistent, recommended for API keys)
-servel secrets set myapp API_KEY=xxx
-servel secrets set myapp DB_PASSWORD=yyy
+servel secrets set API_KEY             # Interactive prompt (recommended)
+servel secrets set DB_PASSWORD         # Never pass secret values inline
 
 # Option 3: Auto-detect sensitive vars during deploy
 servel deploy --verbose --migrate-secrets
@@ -588,6 +604,21 @@ servel deploy --verbose --migrate-secrets
 - `servel set-env-file .env` — convenience command to set `env_file` in servel.yaml
 - `servel env set myapp KEY=VALUE` — update env var on running deployment without rebuild
 - NEXT_PUBLIC_* vars are kept in build-time env AND runtime (Next.js needs them at build time)
+
+### Log Observability
+
+**All application logs are accessible via `servel logs` — no SSH, no Docker commands, no log aggregator needed.**
+
+```bash
+servel logs myapp -f                  # Follow logs (live tail)
+servel logs myapp --since 1h          # Last hour
+servel logs myapp -n 200              # Last 200 lines
+servel logs @mydb -f                  # Infrastructure logs (@ prefix)
+servel logs @chatwoot --service rails -f  # Multi-service infra logs
+servel logs ~traefik                  # System service logs (~ prefix)
+```
+
+When debugging issues in a servel-deployed project, **always start with `servel logs`** — it streams container stdout/stderr directly to your terminal.
 
 ### Debug Container
 
@@ -637,7 +668,7 @@ servel deploy --verbose             # Deploy
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - run: curl -fsSL https://servel.dev/install.sh | bash
+  - run: curl -fsSL https://servel.dev/install.sh | bash  # Official installer (pinned to latest stable)
   - run: servel access join ${{ secrets.SERVEL_TOKEN }}
   - run: servel deploy --verbose
 ```
@@ -767,7 +798,7 @@ routes:
     auth:                             # Per-route authentication
       type: basic
       username: admin
-      password: "${ADMIN_PASSWORD}"   # Supports env var expansion
+      password: "${ADMIN_PASSWORD}"   # Resolved from servel secrets at deploy time (never hardcode)
       rules:                          # Path-based auth rules
         - paths: ["/admin/*"]
           username: admin
@@ -857,11 +888,11 @@ middlewares:
 auth:
   type: basic                         # basic, none
   username: admin
-  password: "${AUTH_PASSWORD}"
+  password: "${AUTH_PASSWORD}"        # Resolved from servel secrets (never hardcode values)
   rules:                              # Path-based rules
     - paths: ["/admin/*"]
       username: admin
-      password: "${ADMIN_PASSWORD}"
+      password: "${ADMIN_PASSWORD}"   # Use: servel secrets set ADMIN_PASSWORD
 
 # Persistent storage
 persist:
