@@ -1,11 +1,29 @@
 ---
 name: servel
-description: Self-hosted deployment platform via Docker Swarm. Deploys applications, manages 45+ infrastructure types (databases, queues, caches, platforms), handles secrets, domains, backups, and server operations. Triggers on deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, rebalance, registry, node management, or access control.
+description: Self-hosted deployment platform specialist. Use when deploying applications, managing infrastructure, or working with Docker Swarm deployments. Enforces dogfooding policy - ALWAYS use servel commands instead of direct Docker operations. Triggers for deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, exec, shell, container, docker, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, rebalance, registry, node management, access control, volumes, audit, bastion, tunnel, or port-forward.
 ---
 
 # Servel
 
 Deploy applications and infrastructure to Docker Swarm with Vercel-like simplicity. Auto-detects project type, provisions SSL, zero-downtime rolling updates.
+
+## Always Use Servel Commands
+
+**Never use raw Docker or SSH commands for operations servel handles.** Servel wraps these with proper state tracking, routing, and safety.
+
+| Instead of... | Use servel |
+|---|---|
+| `ssh user@server` | `servel ssh <server>` |
+| `docker exec` | `servel exec <name> sh` or `servel exec <name> -- cmd` |
+| `docker logs` | `servel logs <name> -f` |
+| `docker service create/update/rm` | `servel deploy`, `servel rm` |
+| `docker stack/compose` | `servel deploy` (compose auto-detected) |
+| `docker ps` / `docker service ls` | `servel ps`, `servel node ps` |
+| Manual DB setup | `servel add postgres --name mydb` |
+| `rsync` / `scp` to server | `servel dev` |
+| Manual backups / `pg_dump` | `servel infra backup <name>` |
+| `docker exec psql < file.sql` | `servel infra sql @mydb file.sql` |
+| Raw `curl` health checks | `servel verify health <name>` |
 
 ## Decision Tree
 
