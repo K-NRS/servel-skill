@@ -432,7 +432,13 @@ servel tunnel                         # Expose localhost publicly
 servel tunnel start <port>            # Start tunnel on port
 servel tunnel list                    # List active tunnels
 servel tunnel stop <id>               # Stop tunnel
-servel port-forward db 5432           # Forward remote port locally
+servel port-forward @db:5432          # Forward remote port locally
+servel port-forward @db:5432 -- drizzle-kit push  # Ephemeral tunnel + run command
+servel pf @db:5432 -- drizzle-kit push            # Short alias
+servel pf @db:5432 --env-file .env.local -- drizzle-kit push  # With env file
+servel port-forward @db:5432 --detach  # Background tunnel
+servel port-forward list               # Show active tunnels
+servel port-forward stop <id>          # Stop tunnel
 ```
 
 **Conflict policies:** remote-wins, local-wins, newer-wins, backup
