@@ -24,6 +24,8 @@ Deploy applications and infrastructure to Docker Swarm with Vercel-like simplici
 | Manual backups / `pg_dump` | `servel infra backup <name>` |
 | `docker exec psql < file.sql` | `servel infra sql @mydb file.sql` |
 | Raw `curl` health checks | `servel verify health <name>` |
+| Manual `iptables -A INPUT -s X -j DROP` | `servel ban <ip>` |
+| Per-app IP blocking via raw Traefik labels | `servel ban <name> <ip>` |
 
 ## Decision Tree
 
@@ -51,6 +53,10 @@ Task -> What are you trying to do?
 |
 +- Manage server -> servel remote status | servel ssh <server>
 |   +- Capacity? -> servel capacity
+|
++- Block bad IPs -> servel ban <ip> (server-wide) | servel ban <name> <ip> (per-deployment)
+|   +- Per-deployment first time? -> servel remote setup-granularban (one-time plugin install)
+|   +- Multiple nodes drifted? -> servel ban sync
 |
 +- Routing issues -> servel traefik status | servel verify dns <domain>
 |   +- Debug route? -> servel traefik debug <deployment>
@@ -503,12 +509,55 @@ servel access role                    # Role management
 servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
 servel access invite --role deployer   # Generate invite token
+servel access invite --embed          # Write invite token to .servel/access.yaml
 servel access invite ls               # List pending invites
 servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
 servel access join <token>            # Join server (idempotent -- safe for CI reruns)
+servel access leave                   # Leave a server you joined
+servel access request                 # In project dir: public request or check approval status (state.json w/ join_key_seed → no prior access needed; access.yaml → join)
+servel access request create [srv] --reason "..." --duration 2h  # Request JIT access
+servel access request create --deployments app --infra mydb      # Custom scope
+servel access request list --status pending  # List access requests (shows SCOPE column)
+servel access request approve <id>    # Approve request (grants temporary access)
+servel access request approve <id> --only-infra mydb             # Narrow scope on approve
+servel access request approve <id> --no-infra                    # Strip infra from grant
+servel access request deny <id>       # Deny request
+servel access request cancel <id>     # Cancel own pending request
+servel access request expire-check    # Expire overdue grants (daemon runs this)
+servel access request-hint "msg"      # Set hint shown when access denied
+servel access request-hint --project myapp "msg"  # Project-specific hint
 ```
+
+### IP Bans
+
+```bash
+# Server-wide bans (ipset+iptables, propagated to all swarm nodes)
+servel ban 1.2.3.4                          # Block IP/CIDR everywhere
+servel ban 10.0.0.0/8 --reason "scanner"    # With reason
+servel unban 1.2.3.4                        # Remove server-wide ban
+servel ban ls                               # List server-wide bans
+servel ban clear --yes                      # Clear all server-wide bans
+servel ban sync                             # Replay bans to all nodes (after node rejoin)
+
+# Per-deployment bans (Traefik denyip plugin — needs one-time setup)
+servel remote setup-granularban             # One-time: install denyip Traefik plugin
+servel ban myapp 1.2.3.4                    # Block IP from a specific deployment
+servel ban @chatwoot 5.6.7.0/24             # Block CIDR from infrastructure
+servel unban myapp 1.2.3.4                  # Remove per-deployment ban
+servel ban ls myapp                         # List bans for a target
+servel ban clear myapp --yes                # Clear all bans for a target
+
+# Aliases: `block` / `unblock`
+```
+
+**When to use which:**
+- Use **server-wide bans** for known-bad IPs (scanners, brute force, abusers). Drops at the kernel before traffic touches any service.
+- Use **per-deployment bans** when you need to block IPs from one specific app but allow them on others. Operates at the HTTP middleware layer.
+- Use **`--allow-ip`** at deploy time when you want a strict allowlist (e.g., admin dashboard restricted to office IPs).
+- Bans survive `servel deploy` and `servel rollback` automatically — no manual re-application.
+- `servel rm <name>` cleans up the deployment's ban state automatically.
 
 ### Registry
 
