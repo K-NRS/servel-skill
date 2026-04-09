@@ -520,14 +520,20 @@ servel access request                 # In project dir: public request or check 
 servel access request create [srv] --reason "..." --duration 2h  # Request JIT access
 servel access request create --deployments app --infra mydb      # Custom scope
 servel access request list --status pending  # List access requests (shows SCOPE column)
-servel access request approve <id>    # Approve request (grants temporary access)
+servel access request approve <id>        # Interactive TUI for scope selection
+servel access request approve <id> -y     # Skip TUI, approve full scope
 servel access request approve <id> --only-infra mydb             # Narrow scope on approve
 servel access request approve <id> --no-infra                    # Strip infra from grant
+servel access request modify <id>         # Adjust scope of approved request (TUI)
+servel access request extend <id> --by 4h # Extend expiry
+servel access request revoke <id>         # Immediately revoke approved request
 servel access request deny <id>       # Deny request
 servel access request cancel <id>     # Cancel own pending request
 servel access request expire-check    # Expire overdue grants (daemon runs this)
 servel access request-hint "msg"      # Set hint shown when access denied
 servel access request-hint --project myapp "msg"  # Project-specific hint
+# After approval, ANY command auto-configures the remote
+servel ps    # (in project dir) → auto-joins if approved, then runs
 ```
 
 ### IP Bans
