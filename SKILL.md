@@ -1,6 +1,6 @@
 ---
 name: servel
-description: Self-hosted deployment platform specialist. Use when deploying applications, managing infrastructure, or working with Docker Swarm deployments. Enforces dogfooding policy - ALWAYS use servel commands instead of direct Docker operations. Triggers for deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, exec, shell, container, docker, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, rebalance, registry, node management, access control, volumes, audit, bastion, tunnel, or port-forward.
+description: Self-hosted deployment platform specialist. Use when deploying applications, managing infrastructure, or working with Docker Swarm deployments. Enforces dogfooding policy - ALWAYS use servel commands instead of direct Docker operations. Triggers for deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, exec, shell, container, docker, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, analytics, visitors, traffic, rebalance, registry, node management, access control, volumes, audit, bastion, tunnel, or port-forward.
 ---
 
 # Servel
@@ -26,6 +26,12 @@ Deploy applications and infrastructure to Docker Swarm with Vercel-like simplici
 | Raw `curl` health checks | `servel verify health <name>` |
 | Manual `iptables -A INPUT -s X -j DROP` | `servel ban <ip>` |
 | Per-app IP blocking via raw Traefik labels | `servel ban <name> <ip>` |
+| Manual `rsync` of Docker volumes between nodes | `servel move @<infra> --to <node> --fast` |
+| `docker service update --constraint-add node.hostname==` for stateful | `servel move @<infra> --to <node>` (moves data too) |
+| Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
+| Eyeballing benchmarks to guess if the fast path is actually fast at your data size | `servel bench migration --target <node> --size 1GB` (deploys ephemeral postgres, measures both strategies, prints comparison table) |
+| Grepping `journalctl` to figure out what migrated, when, and how long it took | `servel move history` (audit trail at `/var/servel/migrations/history.jsonl`) |
+| `du -sh /var/servel/* /var/lib/docker/*` to find what's eating disk | `servel df --growers` (curated 16-path scan, sorted desc) |
 
 ## Decision Tree
 
@@ -53,6 +59,7 @@ Task -> What are you trying to do?
 |
 +- Manage server -> servel remote status | servel ssh <server>
 |   +- Capacity? -> servel capacity
+|   +- Visitor analytics? -> servel analytics (resolves from .servel/state.json) | --cluster for cluster view
 |
 +- Block bad IPs -> servel ban <ip> (server-wide) | servel ban <name> <ip> (per-deployment)
 |   +- Per-deployment first time? -> servel remote setup-granularban (one-time plugin install)
@@ -148,6 +155,7 @@ servel deploy --verbose --no-registry           # Skip registry (single-node)
 servel deploy --verbose --env staging           # Multi-environment
 servel deploy --verbose --rebuild               # Force rebuild, skip cache
 servel deploy --verbose --new                   # Force new deployment with unique subdomain
+servel deploy --verbose --supersede             # Cancel prior in-flight build for this project, then deploy (skip queue wait)
 servel deploy --verbose --dashboard             # Real-time TUI dashboard during deploy
 servel deploy --verbose --save                  # Persist flags to servel.yaml
 servel deploy --memory 1g --cpu 0.5   # Resource limits
@@ -252,12 +260,20 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | CI | woodpecker, woodpecker-agent |
 | Blockchain | bitcoin, ipfs, lnd |
 
+**Naming rules** (`<name>` must be a DNS label):
+- Lowercase `a-z`, digits `0-9`, hyphens — must start/end alphanumeric, max 63 chars. NO dots, underscores, uppercase.
+- For domains use `--domain example.com`, NEVER `--name example.com`.
+- Generate DNS-safe names automatically: `treachery-ai-production`, not `treachery.ai`.
+
 ```bash
 servel add postgres --name db         # Create
 servel add redis,postgres --prefix app # Bundle multiple
 servel add postgres --name db --ha    # High-availability
 servel add supabase --name supa       # Full platform stack
 servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
+# --var uses TEMPLATE variable names (Go-identifier rule), NOT POSIX env vars.
+# Most templates use TitleCase (Password, JwtSecret, AdminEmail); some use UPPER_SNAKE.
+# Find canonical names: `servel infra vars <type>` or `servel add <type> --advanced`.
 servel infra status                   # Health check all
 servel infra vars db                  # View env vars
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
@@ -333,6 +349,15 @@ servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
 servel doctor --remote KN             # Remote server diagnostics
+servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
+servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
+servel move history                   # Audit log of past migrations (newest first)
+servel move history @postgres --limit 50  # Filter to one infra
+servel dashboard                      # One-screen overview of every optional subsystem
+servel dashboard --remote KN          # Same, targeting a specific server
+servel dashboard --watch 5            # Refresh in place every 5 seconds (incident monitoring)
+servel df --growers                   # Top disk consumers (curated 16-path scan, sorted desc)
+servel df --growers --top 20          # Show top 20 instead of default 10
 servel cleanup                        # Remove expired environments
 servel cleanup --force                # No confirmation
 servel prune                          # Remove dangling images/containers
@@ -379,8 +404,21 @@ servel secrets rm API_KEY             # Remove
 servel secrets rotate API_KEY         # Rotate
 servel secrets backup                 # Backup all secrets
 servel secrets scan                   # Scan for exposed secrets
+servel secrets copy <src> <dst>       # Copy secrets: deployment ↔ deployment ↔ .env
 servel deploy --migrate-secrets       # Auto-detect *_KEY, *_SECRET, *_PASSWORD
 ```
+
+**`secrets copy` / `env copy` endpoint syntax** (same for both):
+
+| Form | Meaning |
+|---|---|
+| `myapp` | Encrypted secrets / env of a deployment |
+| `myapp@staging` | Deployment pinned to an environment |
+| `./.env`, `path.env` | Local file (any path with `/` or `.env`) |
+| `file:./path.env` | Explicit file form |
+| `-` | Stdin (source) or stdout (destination) |
+
+Default is **merge**; `--replace` for full replacement. Values never touch disk unencrypted in transit. Local writes are atomic with `0600` perms. Git-tracked files are refused unless `--force`. Production targets (env=production or deployment name contains `prod`) require typed `copy` confirmation. Every copy emits a `secret.copy`/`env.copy` audit entry with src/dst and `[+added ~updated -removed]` counts — never values. Common flags: `--keys`, `--exclude`, `--prefix OLD=NEW`, `--dry-run`, `--replace`, `--force`, `--prod-env`, `--show-keys`. Infrastructure endpoints (`@mydb`) and cross-server copies are v2.
 
 ### Domains & Routing
 
@@ -455,11 +493,14 @@ servel port-forward stop <id>          # Stop tunnel
 servel env set <name> KEY=VALUE       # Set env var (no rebuild, restarts service)
 servel env vars <name>                # Show env vars (secrets masked)
 servel env list                       # List environments
+servel env copy <src> <dst>           # Copy env vars: deployment ↔ deployment ↔ .env (plain vars)
 servel config show <name>             # Show deployment config
 servel config sync <name>             # Sync config to servel.yaml
 servel config sync --dry-run          # Preview sync
 servel set-env-file .env              # Set env_file in servel.yaml (.local rejected)
 ```
+
+**Note:** `env copy` targets plain Docker service env vars; `secrets copy` targets the encrypted store. Same endpoint syntax and flags for both (see `secrets copy` section above). Use `env copy` for non-sensitive config, `secrets copy` for credentials.
 
 **Note:** `servel deploy` auto-reads `.env` + `.env.local` from project dir and injects as Docker env vars. This is NOT persistent — vars are re-sent each deploy. For persistent encrypted storage, use `servel secrets`. See [Environment Variables & Secrets](#environment-variables--secrets) workflow for full details.
 
@@ -505,6 +546,11 @@ servel auth disable <name>            # Disable basic auth
 servel access user                    # User management
 servel access user create --name bob --ssh-key key.pub  # Add user with key
 servel access user create --name bob --generate-key     # Generate keypair for user
+servel access scope add bob --server KN --permissions deploy  # Grant extra perms on one server
+servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployment app
+servel access scope show bob --json   # Verify effective scopes
+# Scope perms are ADDITIVE (extend role; never subtract). Fixes "your role X lacks Y permission"
+# without changing the user's global role. --permissions + --infra + --deployment + --env compose.
 servel access role                    # Role management
 servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
@@ -628,6 +674,7 @@ servel reconcile                      # Discover/fix unlabeled services and miss
 servel reconcile --dry-run            # Preview reconciliation
 servel reconcile --deployments        # Only deployments
 servel reconcile --infra              # Only infrastructure
+servel queue                          # Show build queue: active builds + waiting (aliases: bq, build-queue)
 servel queue clean                    # Force cleanup stale build queue entries
 servel telemetry                      # Show telemetry status
 servel telemetry enable               # Enable anonymous telemetry
@@ -1134,7 +1181,9 @@ environments:
 | alerts | alert, alrt |
 | connect | conn |
 | tunnel | tun |
-| rename | mv, move |
+| rename | (no aliases — `mv`/`move` belong to `servel move`) |
+| dashboard | dash |
+| move | mv |
 | add | create, new |
 | stats | stat |
 | access | acl |
@@ -1159,6 +1208,11 @@ environments:
 | Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR set Cloudflare SSL to Full (strict) |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
+| `name must be valid as a DNS name component` / `not a valid DNS label` | Name has dots/uppercase/underscores. Use DNS-safe name (`my-app-prod`) and pass domain via `--domain`, not `--name`. |
+| `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
+| `<svc>: no running tasks` on Supabase analytics/realtime/supavisor | Memory limit too low. Bump per-service: `servel infra update <name> --memory <svc>:1G`. NEVER drop Erlang services below 512MB. |
+| `access denied: command requires X permission` | Either change role, or extend scope: `servel access scope add <user> --server <s> --permissions X`. |
+| `--var <Name>` rejected / value not picked up | `--var` uses Go-identifier names (`^[A-Za-z_][A-Za-z0-9_]*$`). List canonical names with `servel infra vars <type>`. |
 
 **Diagnostic commands:**
 ```bash
@@ -1245,5 +1299,10 @@ servel inspect myapp            # Full details
 ## Reference Files
 
 - [Template Building Guide](references/TEMPLATES.md) - Create custom infrastructure types
+- [Access Control](references/ACCESS.md) - Roles, permissions, scope composition, SSH gate path tiers, refusals
+- [Analytics Reference](references/ANALYTICS.md) - Visitor analytics, privacy model, agent heuristics
+- [Cross-Node Migration](references/MIGRATION.md) - `servel move`, strategies, pre-copy loop, evacuation, validator
+- [Distributed Storage](references/STORAGE.md) - LINSTOR/DRBD substrate, `--replicated` volumes, replicated migration fast path (Phase 4)
+- [Dashboard](references/DASHBOARD.md) - `servel dashboard` — one-screen view of every optional subsystem
 - Full docs: https://servel.dev/docs
 - Infrastructure Hub: https://hub.servel.dev
