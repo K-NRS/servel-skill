@@ -379,6 +379,8 @@ env_mappings:
 env_file_path: ".env"        # Where to write
 ```
 
+`env_mappings` is **bidirectional** at deploy time. It writes `CamelKey → ENV_VAR` to `.env`, and is also walked in reverse to back-fill `templateVars[CamelKey]` from `infra.Spec.EnvVars[ENV_VAR]` when the camelCase key is unset. This matters when a `rotatable_credentials` entry stores its value under the env-var key (e.g. `VAULT_ENC_KEY`) but a `compose_overrides` block references `{{ .VaultEncKey }}`. Without the mapping, the Go `text/template` fallback renders missing keys as the literal string `<no value>`, which silently poisons the running container env. **Rule:** every `compose_overrides` `{{ .CamelKey }}` reference must have a matching `env_mappings: CamelKey: ENV_VAR` entry whose env-var key is populated by either `template_vars`, `rotatable_credentials`, or `addComposeDefaults`.
+
 ### Rotatable Credentials
 
 ```yaml
@@ -404,13 +406,21 @@ rotatable_credentials:
 ```
 
 **Generators:**
-- `{{generate:password:N}}` - N alphanumeric chars
-- `{{generate:secret:N}}` - N hex chars (cryptographic)
+- `{{generate:password:N}}` - N mixed-charset password chars
+- `{{generate:secret:N}}` - N hex chars (cryptographic, hex-encoded random bytes)
+- `{{generate:hex:N}}` - N hex chars (alias-style: same charset as `secret`, different default length)
+- `{{generate:alphanumeric:N}}` - N alphanumeric chars (no symbols)
+- `{{generate:numeric:N}}` - N digits
+- `{{generate:base64random:N}}` - base64 of N random bytes
+- `{{generate:uuid}}` - UUID v4
 - `{{generate:jwt:anon}}` - JWT with anon claims
 - `{{generate:jwt:service_role}}` - JWT with service_role claims
 - `{{generate:basicauth}}` - Full Basic Auth header
 - `{{generate:basicauth:username}}` - Username part
 - `{{generate:basicauth:password}}` - Password part
+
+**Key-length gotcha (AES, raw-bytes consumers):**
+Generators emit ASCII strings. If a service uses the env var as **raw key bytes** (e.g. Cloak/Erlang `:crypto.crypto_one_time_aead`), the string length must match the cipher's byte size — `:aes_256_gcm` requires exactly 32 bytes, so use `{{generate:hex:32}}`, not `:64`. A 64-char hex string is 32 *encoded* bytes but 64 *raw* bytes — and crypto libraries that don't hex-decode will reject it.
 
 ### Connection Configuration
 
