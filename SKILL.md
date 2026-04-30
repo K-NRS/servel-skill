@@ -561,6 +561,7 @@ servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
 servel access join <token>            # Join server (idempotent -- safe for CI reruns)
+servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-identity local testing)
 servel access leave                   # Leave a server you joined
 servel access request                 # In project dir: public request or check approval status (state.json w/ join_key_seed → no prior access needed; access.yaml → join)
 servel access request create [srv] --reason "..." --duration 2h  # Request JIT access
