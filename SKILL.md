@@ -294,8 +294,16 @@ servel infra vars db                  # View env vars
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
                                       # — multi-service stacks AND single-replica stateful infra get a blast-radius
                                       #   preview + confirmation prompt before any restart. Skip with --yes.
-                                      # — stateful single-replica services use stop-first ordering automatically
-                                      #   (postgres lockfile race, redis AOF rewrite hazard).
+                                      # — stateful single-replica services use the FULL safety set automatically:
+                                      #   stop-first + 120s grace + dnsrr + pause-on-failure + 60s monitor.
+                                      #   Closes the agentkarma-db checkpoint-PANIC class (2026-05-09).
+                                      # — multi-service rolls preflight free RAM. Operator sees concrete
+                                      #   "KN-MANAGER: needs 2048MB, 1820MB free — INSUFFICIENT" if the wave
+                                      #   wouldn't fit. Diff-aware skip means per-service env changes don't
+                                      #   roll the whole stack anymore.
+servel infra customize db --service db --memory 4GB
+                                      # — per-service live apply: rolls ONLY db, not the other 12 services.
+                                      #   Override persisted in spec; survives recreate.
 servel infra upgrade db --image postgres:16  # Safely upgrade image (auto-backup + health check)
 servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upgrade specific service
 servel infra domains add db --domain db.example.com  # Add domain alias
@@ -310,7 +318,11 @@ servel infra run-hooks db --init      # Run post-init hooks
 servel infra archives                 # Manage archived credentials
 servel logs @db -f                    # Follow infra logs (@ prefix)
 servel logs @chatwoot --service rails -f  # Multi-service infra logs
-servel infra backup db                # Backup
+servel infra backup db                # One-shot backup
+servel infra backup db --schedule "0 3 * * *"  # Schedule daily backup (alias for restic schedule add)
+                                      # — backup-able types (postgres/mysql/mongodb/redis/supabase + HA) get a daily
+                                      #   schedule INSTALLED AUTOMATICALLY at `servel add` time. Override with
+                                      #   --backup-schedule "..." or skip with --no-backup-schedule.
 servel infra restore db backup.sql.gz # Restore
 servel infra rotate db                # Rotate credentials
 servel infra restart db --force       # Force restart
