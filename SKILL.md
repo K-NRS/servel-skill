@@ -1,6 +1,6 @@
 ---
 name: servel
-description: Self-hosted deployment platform specialist. Use when deploying applications, managing infrastructure, or working with Docker Swarm deployments. Enforces dogfooding policy - ALWAYS use servel commands instead of direct Docker operations. Triggers for deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, exec, shell, container, docker, secrets, SSL, domains, dev mode, CI/CD, alerts, traefik, routing, server management, capacity, analytics, visitors, traffic, rebalance, registry, node management, access control, volumes, audit, bastion, tunnel, or port-forward.
+description: Self-hosted deployment platform specialist. Use when deploying applications, managing infrastructure, or working with Docker Swarm deployments. Enforces dogfooding policy - ALWAYS use servel commands instead of direct Docker operations. Triggers for deploy, infrastructure, postgres, redis, supabase, backup, restore, logs, exec, shell, container, docker, secrets, SSL, domains, dev mode, link prod env to dev, pull deployment env, inject prod secrets to dev container, link-env, link-infra, dev mode env, CI/CD, alerts, traefik, routing, server management, capacity, analytics, visitors, traffic, rebalance, registry, registry retention, registry migration, ghcr, gitlab registry, auth registry, node management, access control, volumes, audit, bastion, tunnel, port-forward, swap, zram, swapfile, OOM, memory pressure, node undersized, servel upgrade, signed auto-update, version pinning, rolling upgrade, upgrade servers, stop-first stateful, warming task status, infra update preview, backup hint, resilience layer, infra repair, infra check --all-nodes, bind-mount drift, bind source missing, post-rejoin auto-rsync, spec drift, unmanaged mounts, state-file drift, A.1, C.1, F.1, silent drift, cold-restart bomb, or boundary-event auto-repair.
 ---
 
 # Servel
@@ -31,7 +31,7 @@ Deploy applications and infrastructure to Docker Swarm with Vercel-like simplici
 | Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
 | Eyeballing benchmarks to guess if the fast path is actually fast at your data size | `servel bench migration --target <node> --size 1GB` (deploys ephemeral postgres, measures both strategies, prints comparison table) |
 | Grepping `journalctl` to figure out what migrated, when, and how long it took | `servel move history` (audit trail at `/var/servel/migrations/history.jsonl`) |
-| `du -sh /var/servel/* /var/lib/docker/*` to find what's eating disk | `servel df --growers` (curated 16-path scan, sorted desc) |
+| `du -sh /var/servel/* /var/lib/docker/*` to find what's eating disk | `servel df --growers` (curated 16-path scan + drills into volumes, classifies as orphan/active/system/archive/migrate/backup) |
 
 ## Decision Tree
 
@@ -76,7 +76,18 @@ Task -> What are you trying to do?
 |
 +- Backup/restore -> servel infra backup <name> | servel infra restore <name> <file>
 |
++- Drift / silent state issues -> servel infra check --all-nodes (cluster sweep) | servel infra repair @<name> (auto-rsync bind sources, alert on spec/state drift)
+|   +- Bind-mount source missing on worker (post-rejoin / OS-reinstall)? -> auto-fixed by daemon on schedule + on node-rejoin events
+|   +- Manual `docker service update --mount-add` polluted live spec? -> alert-only; never auto-reverted
+|   +- meta.json says running but 0 replicas, or stale target_node_id? -> alert-only; operator decides
+|
 +- Volumes -> servel volumes | servel volumes inspect <name>
+|
++- Where do my images go? -> autodetected from git origin
+|   +- ghcr.io/<owner>/<repo>          (GitHub origin)
+|   +- registry.gitlab.com/<grp>/<prj> (GitLab origin)
+|   +- self-hosted                     (no git remote)
+|   +- override: servel.yaml `registry: <url|self-hosted|named>`
 |
 +- Audit -> servel audit list | servel audit export --format csv -o audit.csv
 ```
@@ -149,7 +160,9 @@ servel deploy --remote staging-srv # Deploy to non-default server
 ```bash
 servel deploy --verbose               # Auto-detect & deploy (ALWAYS use --verbose)
 servel deploy --verbose --preview --ttl 24h     # Preview with cleanup
-servel deploy --verbose --link-infra db,redis   # Link infrastructure
+servel deploy --verbose --link-infra db,redis   # Link infrastructure (internal DNS by default when same-swarm)
+servel deploy --verbose --link-infra db --public   # Force public-domain hostnames (e.g. for cross-swarm)
+servel deploy --verbose --link-infra db --internal # Hard-require same-swarm internal DNS
 servel deploy --verbose --dry-run               # Show plan only
 servel deploy --verbose --no-registry           # Skip registry (single-node)
 servel deploy --verbose --env staging           # Multi-environment
@@ -205,7 +218,9 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--domain, -d` -- Domain for routing
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
-- `--link-infra` -- Link infrastructure (comma-separated)
+- `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way.
+- `--public` -- Force linked infra to use public-domain hostnames (overrides per-link `access:internal` in servel.yaml). Mutually exclusive with `--internal`.
+- `--internal` -- Force internal Docker DNS for every link; **errors** if any linked infra isn't on the deploy target swarm.
 - `--no-registry` -- Skip registry push
 - `--rebuild` -- Force rebuild
 - `--no-smart` -- Disable smart detection
@@ -274,9 +289,13 @@ servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
 # --var uses TEMPLATE variable names (Go-identifier rule), NOT POSIX env vars.
 # Most templates use TitleCase (Password, JwtSecret, AdminEmail); some use UPPER_SNAKE.
 # Find canonical names: `servel infra vars <type>` or `servel add <type> --advanced`.
-servel infra status                   # Health check all
+servel infra status                   # Health check all (distinguishes "warming" from "failed" — see below)
 servel infra vars db                  # View env vars
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
+                                      # — multi-service stacks AND single-replica stateful infra get a blast-radius
+                                      #   preview + confirmation prompt before any restart. Skip with --yes.
+                                      # — stateful single-replica services use stop-first ordering automatically
+                                      #   (postgres lockfile race, redis AOF rewrite hazard).
 servel infra upgrade db --image postgres:16  # Safely upgrade image (auto-backup + health check)
 servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upgrade specific service
 servel infra domains add db --domain db.example.com  # Add domain alias
@@ -300,8 +319,11 @@ servel infra stop db                  # Stop (scales to 0)
 servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
 servel infra rm db                    # Remove
-servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services)
+servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services, resilience drift A.1/C.1/F.1)
 servel infra check mydb               # Check specific infra
+servel infra check --all-nodes        # Cluster-wide resilience scan across every configured remote (skips swarm workers)
+servel infra repair @mydb             # Auto-rsync missing bind sources; alert on spec/state drift (resilience layer)
+servel infra repair @mydb --dry-run   # Preview what the resilience layer would auto-repair
 servel infra sql @mydb schema.sql     # Run SQL file against database
 servel infra sql @mydb ./migrations   # Run all .sql files in directory (alphabetical order)
 servel infra sql @mydb "SELECT 1"     # Run inline SQL
@@ -342,8 +364,8 @@ servel remote provision               # Automated setup
 servel remote provision --repair      # Repair corrupted keys/services
 servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
-servel capacity                       # Capacity forecast + recommendations
-servel capacity --json                # JSON output
+servel capacity                       # Capacity forecast + recommendations + Reservation Health + Stateful Concentration (advisory sections from autonomous remediation)
+servel capacity --json                # JSON output (.rightsize, .stateful_moves expose Tier 1 advisor data)
 servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
@@ -380,7 +402,9 @@ servel node specs <name>              # Node specifications
 servel node drain <name>              # Drain for maintenance
 servel node drain <name> --remove     # Drain then remove from cluster
 servel node activate <name>           # Reactivate drained node
-servel node balance --dry-run         # Preview rebalance plan
+servel node balance --dry-run         # Preview rebalance plan (CLI default strategy: memory; daemon default: auto with memory→tasks fallthrough)
+servel node balance --strategy auto   # Memory planner first, fallthrough to tasks if 0 migrations + task spread > delta
+servel node balance --strategy tasks --task-delta 5  # Equalize stateless task count per node
 servel node balance                   # Execute cluster rebalance
 servel node schedule <name> --at "2026-02-01 03:00"  # One-time drain
 servel node schedule <name> --in 2h   # Relative time drain
@@ -394,6 +418,48 @@ servel node alias <hostname> <alias>  # Set friendly alias
 servel node label <hostname> key=val  # Add/remove node labels
 ```
 
+### Auto-Update
+
+Signed self-upgrade for the CLI, daemon, and configured remotes. Notify-only by default; opt in to auto-apply per machine. See [AUTO_UPDATE.md](references/AUTO_UPDATE.md) for the full pipeline (sha256 + ed25519 verification, key rotation, daemon notifier, rolling fleet upgrades).
+
+```bash
+servel upgrade                        # self-upgrade CLI (verifies signature before swap)
+servel upgrade --check                # check only, no install
+servel upgrade --rollback             # restore previously-installed binary
+servel upgrade --pin v0.4.2           # auto-apply ceiling
+servel upgrade --set-mode apply       # opt in to auto-apply (default: notify)
+servel upgrade --servers              # also roll the configured remotes
+
+servel upgrade-servers --rolling      # production fleet upgrade — one node at a time, health-gated
+servel upgrade-servers --server KN    # upgrade one specific remote
+```
+
+Daemon-side: every `servel remote status` reads `/var/servel/cache/update.json` (written by the daemon's once-per-24h check) and surfaces "new servel release available" inline. Auto-apply on the daemon is **never** done — operators run `servel remote upgrade` (or `servel upgrade-servers`) to roll the fleet.
+
+### Swap Management
+
+Two-tier autonomous swap (zram + elastic disk swapfile). Daemon configures, monitors, and resizes within per-node policy bounds. See [SWAP.md](references/SWAP.md) for full details.
+
+```bash
+servel node swap status                      # cluster-wide table: zram, disk, recommendations
+servel node swap status <hostname>           # detailed view (devices, advisor reasons)
+servel node swap status --json               # JSON for scripting
+
+servel node swap enable --all --apply-now    # roll cluster default to every node, install now
+servel node swap enable kn-deployments --max 16G   # raise this node's cap (memory-bound workload)
+servel node swap enable worker-1 --no-zram   # disable zram (kernel module missing)
+servel node swap enable kn-deployments --zram-algo zstd   # higher compression at CPU cost
+
+servel node swap disable worker-1            # stop daemon's elastic loop, leave runtime alone
+servel node swap disable --all --purge --yes # tear down zram + truncate /swapfile fleet-wide
+
+servel node swap resize kn-deployments --to 6G   # one-shot manual disk-tier resize (gated)
+servel node swap resize worker-1 --to 2G --force # bypass safety gates (deploy/mem/disk pressure)
+```
+
+Defaults: zram **on** (lz4, 2G), disk swapfile **2G→8G elastic**, swappiness 10. The daemon never auto-applies advisor recommendations — operators run `servel node swap enable` to apply them.
+
+
 ### Secrets
 
 ```bash
@@ -405,8 +471,11 @@ servel secrets rotate API_KEY         # Rotate
 servel secrets backup                 # Backup all secrets
 servel secrets scan                   # Scan for exposed secrets
 servel secrets copy <src> <dst>       # Copy secrets: deployment ↔ deployment ↔ .env
+servel redeploy <name>                # Apply secret changes to running container (no rebuild)
 servel deploy --migrate-secrets       # Auto-detect *_KEY, *_SECRET, *_PASSWORD
 ```
+
+**Applying secret changes to a running service:** `secrets copy` writes to encrypted `.env.age` on disk. To push values into the live container, run `servel redeploy <name>` — it diffs `spec.Env ∪ .env.age` against the live service env and emits `--env-add` / `--env-rm` (preserves user-added env vars; degraded-safe if inspect fails). `servel deploy <name>` does **not** accept a bare deployment name (requires path or yaml alias) — use `redeploy` for config-only application from any directory.
 
 **`secrets copy` / `env copy` endpoint syntax** (same for both):
 
@@ -469,6 +538,12 @@ servel dev --port 3001                # Custom port
 servel dev --domain staging.app.com   # Custom domain
 servel dev --no-sync                  # One-time upload only
 servel dev --conflict-policy newer-wins # Sync conflict resolution
+servel dev --link-env myapp-prod      # Pull plaintext env from a deployment
+servel dev --link-env myapp-prod --secrets   # +decrypted secrets (ACL: dev:env:pull or owner)
+servel dev --link-infra @postgres,@redis     # Inject @infra connection vars (auto-tunneled)
+servel dev --link-env myapp-prod --only DATABASE_URL,REDIS_URL  # Whitelist filter
+servel dev --link-env myapp-prod --exclude SENTRY_DSN           # Blacklist filter
+servel dev --link-infra @postgres --no-tunnel  # Disable auto-tunnel (warns per internal host)
 servel dev list                       # Active sessions
 servel dev logs <id> -f               # Follow session logs
 servel dev stop <id>                  # Stop session
@@ -486,6 +561,38 @@ servel port-forward stop <id>          # Stop tunnel
 ```
 
 **Conflict policies:** remote-wins, local-wins, newer-wins, backup
+
+#### Linking Production Env into Dev (`--link-env` / `--link-infra`)
+
+When the user wants the dev container to run with prod-shaped env (real DB URL, real connection bundles, optionally real secrets), reach for `--link-env` / `--link-infra`. **Never** ask the user to copy/paste from `servel env vars` or `.env`; the link flags exist so they don't have to.
+
+| Goal | Flag |
+|------|------|
+| Pull plaintext env from a real deployment | `--link-env <deployment>` |
+| Inject `DATABASE_URL`/`REDIS_URL`/etc. from one or more `@infra` | `--link-infra @name[,@name...]` |
+| Also pull decrypted secrets (opt-in, ACL-gated) | `--secrets` |
+| Keep only specific keys | `--only KEY[,KEY...]` |
+| Drop specific keys | `--exclude KEY[,KEY...]` |
+| Pass internal-host values through unchanged (advanced) | `--no-tunnel` |
+
+Auth invariants (server-side, in `dev_env.go:authorizeDevEnvPull`):
+
+1. Empty `SERVEL_GATE_USER` → allow (direct SSH = root-equivalent).
+2. Gate user equals `deployment.DeployedBy` → allow (owner bypass).
+3. Gate user has `dev:env:pull` permission in any scope → allow.
+4. Otherwise → deny with explicit `deny_reason` in the audit log.
+
+Role-based grants (admin, super_admin) deliberately do NOT include `dev:env:pull` — pulling prod secrets to a laptop is opt-in per user. Grant explicitly: `servel access scope add <user> --server <name> --permissions dev:env:pull`.
+
+Auto-tunnel: when a linked value contains `servel-infra-*` or `servel-system-*` with a port (e.g. `postgres://...@servel-infra-pg:5432/db`), `servel dev` spawns a `portfwd.Manager` per host:port pair and rewrites the value to `localhost:N` before injecting. Bare hostnames with no port surface a warning instead — there's no port to forward. `--no-tunnel` skips the rewrite and warns per detected host. Now that `servel deploy --link-infra` defaults to internal Docker DNS, prod env vars pulled via `--link-env` will more often contain `servel-infra-*` hosts — the auto-tunnel handles them transparently.
+
+Cache: pulled env is written to `~/.servel/dev/sessions/<sid>/env.cache` (mode 0600, dir 0700, 1h TTL, JSON with provenance). Removed on dev exit; stale caches from crashed sessions are evicted on next `servel dev` start. Cache files with non-0600 perms are refused on read.
+
+Cross-server limitation: the linked deployment / `@infra` must live on the same Docker swarm as the dev session's SSH endpoint. `--link-server` is not implemented (future work).
+
+Audit: every pull (allow OR deny) emits action `dev.env.pull`. Metadata records key names only — never values. Inspect with `servel audit list --action dev.env.pull --limit 20`.
+
+See [DEV_LINK_ENV.md](references/DEV_LINK_ENV.md) for the full reference.
 
 ### Environment Variables
 
@@ -616,13 +723,39 @@ servel ban clear myapp --yes                # Clear all bans for a target
 
 ### Registry
 
+**Default behavior:** `servel deploy` autodetects the registry from `git remote get-url origin`. GitHub → `ghcr.io/<owner>/<repo>`, GitLab → `registry.gitlab.com/<group>/<project>`. No git remote → self-hosted. Override per-project with `servel.yaml: registry: <url|self-hosted|named>`.
+
+Resolver priority: `--registry` flag > `servel.yaml: registry:` > git autodetect > server default > self-hosted.
+
 ```bash
-servel registry                       # Browse registry repos
-servel registry tags myapp            # List tags with sizes
-servel registry rm myapp:v1.0         # Delete tag (confirmation required)
+servel registry                       # Cross-registry table (every configured registry)
+servel registry myregistry            # Per-repo listing for one registry
+servel registry tags <repo>           # Bare, host/ns/name, or @<project>
+servel registry rm <repo>:<tag>       # Same resolution as tags
 servel registry info                  # Registry info + capabilities
-servel registry du                    # Per-repo disk usage breakdown
+servel registry du                    # Per-repo disk usage (self-hosted; hint at >5GB unique)
+servel registry retain --keep 10      # Trim old versions, keep 10 newest per repo (dry-run + --older-than 30d)
+servel registry migrate <project>     # Move project to its auto-detected registry (ghcr/gitlab)
+servel registry migrate --all --continue-on-error  # Bulk migrate
+servel registry decommission          # Tear down self-hosted (after migrate, --keep-volume for safety)
 ```
+
+**Always-preserved tags** for retain: `latest`, `stable`, `main`, `master`. Daily systemd timer runs retention + GC at `/var/servel/scripts/registry-retain.sh`.
+
+### Auth Setup (External Registries)
+
+```bash
+docker login ghcr.io
+servel auth registry add ghcr.io --import-docker-config  # Easiest: read from ~/.docker/config.json
+servel auth registry add ghcr.io --username k-nrs --password $GHCR_TOKEN  # Explicit
+servel auth registry test ghcr.io                        # Verify before bulk migrations
+servel auth registry ls                                  # List configured
+servel auth registry rm ghcr.io                          # Remove
+```
+
+Token scopes: GHCR needs `read:packages`+`write:packages` (+`delete:packages` for `registry rm`). GitLab needs deploy token with `read_registry`+`write_registry`, or PAT with `api`. Stored Age-encrypted at `/var/servel/secrets/registry-auth/<sha256>.age` + merged into `~/.docker/config.json`.
+
+**Multi-node TODO:** `auth registry add` lands on one host today. Workaround: run `--remote <node>` per worker until cross-node distribution lands.
 
 ### Volumes
 
@@ -668,9 +801,17 @@ servel detect                         # Detect project build type
 servel detect --verbose               # Detailed detection info
 servel init                           # Initialize servel.yaml
 servel validate                       # Validate servel.yaml
-servel upgrade                        # Self-upgrade CLI
-servel upgrade-servers                # Upgrade servel on all servers
-servel upgrade-servers --remote KN    # Upgrade specific server
+servel upgrade                        # Self-upgrade CLI (signed sha256+ed25519, atomic swap)
+servel upgrade --check                # Check for update; print result, exit
+servel upgrade --rollback             # Restore previously-installed binary (.prev)
+servel upgrade --pin v0.4.2           # Pin auto-apply ceiling
+servel upgrade --pin off              # Clear pin
+servel upgrade --set-mode notify      # notify | apply | off — default notify
+servel upgrade --servers              # Self-upgrade then run upgrade-servers
+servel upgrade-servers                # Upgrade servel on all servers (sequential)
+servel upgrade-servers --rolling      # One-at-a-time with health gate (recommended for prod)
+servel upgrade-servers --server KN    # Upgrade specific server
+servel upgrade-servers --dry-run      # Preview plan
 servel tag <name> <tag>               # Add tags to deployment
 servel untag <name> <tag>             # Remove tags
 servel reconcile                      # Discover/fix unlabeled services and missing state
@@ -843,6 +984,12 @@ domains:                              # Multiple domains
   - app.example.com
   - api.example.com
 port: 3000
+
+# Registry override (default: autodetect from git origin)
+# registry: ghcr.io/k-nrs/myapp       # explicit external
+# registry: self-hosted                # force self-hosted (e.g. local-only experiments)
+# registry: corporate-internal         # named registry from server config
+# (omit entirely)                      # autodetect — GitHub→ghcr, GitLab→registry.gitlab.com
 
 # Cloudflare proxy support
 cloudflare: true                      # Skip HTTPS redirect (prevents redirect loops with Flexible SSL)
@@ -1210,6 +1357,7 @@ environments:
 | Health check fails | `servel verify health <name>` |
 | Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR set Cloudflare SSL to Full (strict) |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
+| Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
 | `name must be valid as a DNS name component` / `not a valid DNS label` | Name has dots/uppercase/underscores. Use DNS-safe name (`my-app-prod`) and pass domain via `--domain`, not `--name`. |
 | `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
@@ -1304,8 +1452,11 @@ servel inspect myapp            # Full details
 - [Template Building Guide](references/TEMPLATES.md) - Create custom infrastructure types
 - [Access Control](references/ACCESS.md) - Roles, permissions, scope composition, SSH gate path tiers, refusals
 - [Analytics Reference](references/ANALYTICS.md) - Visitor analytics, privacy model, agent heuristics
-- [Cross-Node Migration](references/MIGRATION.md) - `servel move`, strategies, pre-copy loop, evacuation, validator
+- [Autonomous Remediation](references/AUTONOMOUS_REMEDIATION.md) - 2026-05-07 daemon remediations: rebalance auto-strategy, right-size advisor, load-aware placement, Reservations-only capacity, constraint drift auto-repair, stateful auto-rebalance (Tier 1 advisory always-on / Tier 2 opt-in)
+- [Cross-Node Migration](references/MIGRATION.md) - `servel move`, strategies, pre-copy loop, evacuation, validator, autonomous Tier 2 invocation
 - [Distributed Storage](references/STORAGE.md) - LINSTOR/DRBD substrate, `--replicated` volumes, replicated migration fast path (Phase 4)
 - [Dashboard](references/DASHBOARD.md) - `servel dashboard` — one-screen view of every optional subsystem
+- [Post-Deploy Probe](references/POST_DEPLOY_PROBE.md) - Routability probe + auto-respawn that runs after deploy and rollback (closes the stale-Traefik-VIP class of outages)
+- [Dev Link Env](references/DEV_LINK_ENV.md) - `servel dev --link-env` / `--link-infra` — pull prod env (and optionally secrets) into dev, with auto-tunneling, ACL, audit, and cache lifecycle
 - Full docs: https://servel.dev/docs
 - Infrastructure Hub: https://hub.servel.dev
