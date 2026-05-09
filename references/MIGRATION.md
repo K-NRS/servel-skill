@@ -221,6 +221,52 @@ Services with `traefik.enable=true` get `stop_grace_period=30s` automatically
 so in-flight HTTP requests drain before SIGKILL. Internal services keep
 Docker's default 10s unless overridden in compose.
 
+## Stop-first ordering for stateful single-replica services
+
+Landed 2026-05-09 in commit `601c156`. When `servel infra update`, `servel deploy`, or any path that mutates a service spec targets a **single-replica stateful service** (postgres, redis, mongodb, mysql, sqlite, …) and the operator hasn't explicitly chosen another order, the spec gets `update_config.order = "stop-first"`. Stateless services keep the Swarm default `start-first`.
+
+| Service class | Order | Why |
+|---------------|-------|-----|
+| Stateless (replicas ≥ 2 OR global mode) | `start-first` | Zero-downtime — old + new run concurrently behind the LB |
+| Stateful (replicas = 1, mounts a volume) | `stop-first` | Old task exits cleanly (WAL flushed, AOF synced, locks released) before new starts |
+
+The data-layer hazards `start-first` creates for unreplicated state:
+
+- **PostgreSQL** — new postmaster races old for the data dir. Either `postmaster.pid` acquisition fails, or the new starts while old is still writing checkpoints. Next start can PANIC with `could not locate a valid checkpoint record`. Observed in production during a Supabase memory roll
+- **Redis (AOF/RDB)** — identical lockfile race plus AOF rewrite hazard
+- **SQLite / embedded KV** — file lock contention
+
+`internal/infra/stateful_update_order.go:applyStatefulUpdateOrder` is the single decision point. Operators who explicitly set `update.order: start-first` or `stop-first` keep their choice — the override only fires when the order is empty or already `start-first`.
+
+`servel move` itself is **not** affected (it always stops the source before starting the target — that's its whole job). This change only touches in-place service updates that previously rolled with start-first concurrency.
+
+The brief downtime is the correct trade-off for unreplicated state. Use HA variants (`servel add postgres mydb --ha`) when downtime is unacceptable. See [STORAGE.md](STORAGE.md) for replicated-volume setups that eliminate the rolling-restart hazard at the substrate level.
+
+## Autonomous invocation (Tier 2)
+
+Since 2026-05-07 the daemon can invoke `servel move` on its own when stateful concentration is detected. Two tiers:
+
+- **Tier 1 (always on when `rebalance_enabled: true`)** — `rebalance.DetectStatefulConcentration` runs every rebalance tick (10m default). Hot node = ≥`rebalance_stateful_min_task_ratio` × cluster-avg tasks AND one stateful infra ≥25% of that node's tasks. Surfaces in `servel cap` "Stateful Concentration" with the exact `servel move @<infra> --to <node>` command, plus `SeverityInfo` alert.
+- **Tier 2 (opt-in via `rebalance_stateful_auto: true`)** — daemon shells out to `/usr/local/bin/servel move @<infra> --to <target> --yes` when ALL gates pass:
+
+  1. `rebalance_enabled = true`
+  2. `rebalance_stateful_auto = true`
+  3. Migration size ≤ `rebalance_stateful_max_bytes` (default 1 GiB; clamp 100 MiB to 10 GiB)
+  4. ≥24h cluster-wide cooldown since last auto-move
+  5. ≥7-day per-infra cooldown
+  6. `/var/servel/build-queue` empty (no active deploy)
+  7. Cluster topology stable for ≥1h (uses daemon `StartedAt` as proxy)
+  8. Target real CPU ≤70%, real memory ≤80%
+  9. Target free disk ≥2× migration size
+
+Subprocess execution keeps every `servel move` safety check (pre-flight plan, atomic state updates, audit logging, rollback) as the single source of truth. Daemon orchestrates "when"; `servel move` owns "how".
+
+State + audit: `state.StatefulRebalance.Records` (capped 50) — `FromNode`, `ToNode`, `BytesMoved`, `DurationSec`, `Status`. Each Tier 2 attempt also lands one record in `/var/servel/migrations/history.jsonl` (the standard `servel move history` log).
+
+Daemon log lines: `stateful concentration detected` (info), `stateful auto-move executing/completed/failed` (warn/error). Alerts: `ConditionClusterRebalanceBlocked` (Tier 1), `ConditionClusterRebalanced` (Tier 2 success), `SeverityCritical` (Tier 2 failure).
+
+Code: `internal/rebalance/stateful.go` (pure detector + target selector), `internal/daemon/stateful_rebalance.go` (gates + subprocess). See [AUTONOMOUS_REMEDIATION.md](AUTONOMOUS_REMEDIATION.md) for the full autonomous-remediation surface.
+
 ## Legacy commands (still supported)
 
 | Command | Status | Behavior |

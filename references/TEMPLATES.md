@@ -81,11 +81,15 @@ connection_template: "protocol://{{.Username}}:{{.Env.PASSWORD}}@{{.Host}}:{{.Po
 connection_password_key: PASSWORD
 
 connection_vars:
-  HOST: "{{ .Host }}"
+  # Prefer internal Docker DNS when same-swarm (overlay alias resolves on
+  # servel-infra-{name}-network). Falls back to public domain for cross-swarm
+  # links and --public deploys. NEVER use {{ .InternalHost }} alone for
+  # NEXT_PUBLIC_* values — browsers can't resolve overlay DNS.
+  HOST: "{{ .InternalHost | default .Host }}"
   PORT: "{{ .Port | default 5432 }}"
   USER: "{{ .Username }}"
   PASSWORD: "{{ .Password }}"
-  DATABASE_URL: "protocol://{{ urlEncode .Username }}:{{ urlEncode .Password }}@{{ .Host }}:{{ .Port }}/{{ .Database }}"
+  DATABASE_URL: "protocol://{{ urlEncode .Username }}:{{ urlEncode .Password }}@{{ .InternalHost | default .Host }}:{{ .Port }}/{{ .Database }}"
 
 supports_backup: true
 backup_command: ["backup", "-o", "/backup/{{.Name}}-{{.Timestamp}}.sql"]
@@ -216,9 +220,15 @@ default_resources:
 
 connection_template: "https://{{ .Domain }}"
 
+# Multi-service connection_vars: prefer the overlay alias of the gateway
+# service (set via top-level `domain_service:`) for server-to-server traffic.
+# Use {{ .Services.<short-name>.InternalHost }} to address a SPECIFIC compose
+# service from the bundle (e.g. the raw `db` service inside Supabase).
 connection_vars:
-  URL: "https://{{ .Var.Domain }}"
+  URL: '{{ if .InternalHost }}http://{{ .InternalHost }}:8000{{ else }}https://{{ .Var.Domain }}{{ end }}'
   API_KEY: "{{ .Env.API_KEY }}"
+  # Direct DB connection — only resolves over the overlay; falls back to public
+  DB_URL: '{{ if (index .Services "db").InternalHost }}postgresql://app:{{ urlEncode .Env.POSTGRES_PASSWORD }}@{{ (index .Services "db").InternalHost }}:5432/postgres{{ end }}'
 
 post_restore:
   - name: sync_passwords
@@ -434,16 +444,22 @@ connection_username_template: "admin@{{.Domain}}"
 connection_default_password: "admin"
 
 # Auto-inject vars when using --link-infra
+# `.InternalHost` is the overlay-network DNS name (e.g.
+# servel-infra-mydb-postgres) when same-swarm; empty for cross-swarm or
+# --public deploys. The `default` pipeline returns `.Host` (public domain)
+# when `.InternalHost` is empty — covers both cases with one expression.
 connection_vars:
-  HOST: "{{ .Host }}"
+  HOST: "{{ .InternalHost | default .Host }}"
   PORT: "{{ .Port | default 5432 }}"
   USER: "{{ .Username }}"
   PASSWORD: "{{ .Password }}"
-  DATABASE_URL: "postgresql://{{ urlEncode .Username }}:{{ urlEncode .Password }}@{{ .Host }}:{{ .Port }}/{{ .Database }}"
+  DATABASE_URL: "postgresql://{{ urlEncode .Username }}:{{ urlEncode .Password }}@{{ .InternalHost | default .Host }}:{{ .Port }}/{{ .Database }}"
 ```
 
 **Template Variables:**
-- `.Host` - Service hostname
+- `.Host` - Public connection host (auto-generated `{name}.{primaryDomain}`)
+- `.InternalHost` - Internal Docker DNS alias on `servel-infra-{name}-network`. Single-service: full Swarm service name. Multi-service: short alias of `domain_service`. **Empty** when the link is cross-swarm or rendered with `--public` / `access: public`.
+- `.Services.<name>.InternalHost` - Per-service overlay alias (multi-service infra). Use `{{ if (index .Services "db").InternalHost }}…{{ end }}` to reach a specific compose service. **Never** put internal-DNS values in `NEXT_PUBLIC_*` envs — browsers can't resolve overlay DNS.
 - `.Port` - Exposed port
 - `.Username`, `.Password`, `.Database` - Credentials
 - `.Env.VAR` - Environment variable value
