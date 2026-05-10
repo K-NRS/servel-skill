@@ -386,6 +386,7 @@ servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
 servel doctor --remote KN             # Remote server diagnostics
+servel doctor --remote KN --fix       # Auto-repair safe issues (swap, middlewares, Traefik timeouts)
 servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
 servel move history                   # Audit log of past migrations (newest first)
@@ -531,6 +532,8 @@ servel traefik debug <deployment>     # Debug routing config for a deployment
 servel traefik restart                # Restart Traefik
 ```
 
+**Slow uploads 502 at ~60s?** Traefik v3.x ships a 60s `entryPoints.<name>.transport.respondingTimeouts.readTimeout` default. Servers provisioned before that knob was set in `traefik/config.go` inherit the broken default. Run `servel doctor --remote <name> --fix` — the `Traefik Timeouts` check resolves the live `traefik.yml` from the docker mount (handles legacy `traefik.yaml`), fills in `300s` only when missing (never downgrades higher operator-chosen values), and force-restarts Traefik. Idempotent.
+
 ### Verification
 
 ```bash
@@ -538,6 +541,7 @@ servel verify <name>                  # Full verification
 servel verify config                  # Verify configuration
 servel verify health <name>           # Check service health
 servel verify ssl <domain>            # Check SSL certificates
+servel verify cf-ssl [project]        # Classify CF→origin SSL mode (Full strict / Flexible / Off)
 servel verify dns <domain>            # Check DNS configuration
 servel verify routing <name>          # Check Traefik routing
 servel verify dependencies <name>     # Check dependencies
@@ -617,10 +621,41 @@ servel env vars <name>                # Show env vars (secrets masked)
 servel env list                       # List environments
 servel env copy <src> <dst>           # Copy env vars: deployment ↔ deployment ↔ .env (plain vars)
 servel config show <name>             # Show deployment config
+servel config show --server           # Show server config (/var/servel/config.yaml) over SSH
 servel config sync <name>             # Sync config to servel.yaml
 servel config sync --dry-run          # Preview sync
 servel set-env-file .env              # Set env_file in servel.yaml (.local rejected)
 ```
+
+**Configuration knobs** — operate on either `~/.servel/config.yaml` (`--client`, default) or `/var/servel/config.yaml` (`--server`, over SSH; pair with `--remote <name>`):
+
+```bash
+# Auto-routes to --server because build_queue.* is server-only
+servel config set build_queue.max_concurrent 2
+servel config set log_retention.max_age_days 14 --remote KN
+servel config set auto_update.mode apply --client
+
+servel config get build_queue.max_concurrent --remote KN
+servel config get auto_update.mode --client --json
+
+servel config list --server --section build_queue --defaults  # tree + defaults
+servel config list --client                                   # all client keys
+
+servel config wizard --server --remote KN                     # walk every key interactively (promptui select for bool/enum, edit-inline for others)
+servel config wizard --server --section build_queue           # scope wizard to one section
+servel config wizard --server --editor                        # open $EDITOR on YAML w/ type:X default:Y annotations
+servel config wizard --server --editor --editor-bin nvim      # override editor binary
+
+servel config validate                                        # validate live client config
+servel config validate --server --remote KN                   # pull + validate server config
+servel config validate ./draft.yaml --server                  # dry-run a yaml file vs schema
+```
+
+**Type coercion** for `set` and `wizard`: bool accepts `true/false/yes/no/y/n/on/off/1/0`; duration uses Go syntax (`10m`, `24h`); `[]string` is comma-separated; `map[string]string` is `key=value,key=value`. Secret-like fields (`*token*`, `*password*`, `*auth_key*`) print as `***` unless `--raw`/`--include-secrets`.
+
+**Allocating an unset section is safe**: setting one leaf inside a previously-nil section (build_queue, log_retention, build_cache, registry_retention, access, auto_update, telemetry) populates siblings from canonical defaults — never zero-initializes them. So `servel config set build_queue.max_concurrent 2` on a fresh server writes `{enabled: true, max_concurrent: 2, queue_timeout: 10m}`, not `{max_concurrent: 2}` with `enabled: false`.
+
+**Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
 
 **Note:** `env copy` targets plain Docker service env vars; `secrets copy` targets the encrypted store. Same endpoint syntax and flags for both (see `secrets copy` section above). Use `env copy` for non-sensitive config, `secrets copy` for credentials.
 
@@ -735,6 +770,54 @@ servel ban clear myapp --yes                # Clear all bans for a target
 - Use **`--allow-ip`** at deploy time when you want a strict allowlist (e.g., admin dashboard restricted to office IPs).
 - Bans survive `servel deploy` and `servel rollback` automatically — no manual re-application.
 - `servel rm <name>` cleans up the deployment's ban state automatically.
+
+### Security Checkpoint (Vercel-style bot/DDoS gate)
+
+Per-deployment ForwardAuth challenge (PoW or Cloudflare Turnstile) that runs as a system service alongside Traefik. Stateless HMAC cookies; no Redis.
+
+```bash
+# Master switch — heuristic-gated by default
+servel security checkpoint enable myapp
+servel security checkpoint enable myapp --mode always
+servel security checkpoint enable myapp --verifier turnstile
+
+# Runtime mode flips (no redeploy needed)
+servel security checkpoint attack myapp                 # → under-attack
+servel security checkpoint normal myapp                 # → revert
+
+# Disable / status
+servel security checkpoint disable myapp
+servel security checkpoint status [myapp]
+
+# Rotate HMAC key (with grace period — old cookies still valid)
+servel security checkpoint rotate-key
+
+# Aliases: `servel sec checkpoint *`
+```
+
+**Modes:** `off` | `suspicious` (default) | `always` | `under-attack` (auto-set on RPS spike).
+
+**Per-route + per-domain config in `servel.yaml`:**
+```yaml
+security:
+  checkpoint:
+    enabled: true
+    mode: suspicious
+    cookie_ttl: 24h
+    fail_mode: open                    # 'closed' to block when daemon down
+    routes:
+      - match: "/api/webhooks/*"
+        skip: true                     # Stripe, GitHub
+      - match: "/admin/*"
+        mode: always
+    bypass:
+      cidrs: ["10.0.0.0/8"]
+      user_agents: ["Stripe/*"]
+```
+
+**System service:** `servel-system-checkpoint` deployed automatically by `servel server provision`. ForwardAuth target via `servel-checkpoint@file` middleware. State at `/var/servel/checkpoint/{hmac.key,policies.json}`. Inert until a deployment opts in.
+
+**When to use:** Public-facing app under bot/scraper pressure, or anticipating burst traffic. Don't enable on internal-only services or APIs called by known partners (use bypass CIDRs/UAs instead).
 
 ### Registry
 
@@ -896,13 +979,16 @@ servel deploy --verbose --migrate-secrets
 #   - DB_PASSWORD    # If not in .env, assumed already on server (encrypted)
 ```
 
-**Priority (highest wins):** servel secrets > servel.yaml `env:` > `env_file:` > `.env`/`.env.local`
+**Priority (highest wins):** **infra-link injection** > servel secrets > servel.yaml `env:` > `env_file:` > `.env` > `.env.local`
 
 **Important distinctions:**
+- **Infra-link wins** (since 2026-05-10): when `infra: - name: mydb` is in servel.yaml, those env vars come from the live infra spec at deploy time and override anything in `.env*` / `env_file` / `yaml env:`. Conflicts show as a single dim line: `(infra-link overrode N key(s) from .env / env_file / yaml env: …)`. To opt out: `--public` or `access: public` per link.
+- **`.env.local` is dev-only** by Next.js convention. Today it's still loaded for `servel deploy` with a soft notice; a future release will skip it so it stays clean for `next dev` / `bun dev` localhost work. For production-only overrides, use `env_file:` (e.g. `env_file: .env.production`).
 - `env_file:` in servel.yaml rejects `.local` files (dev-only convention)
 - `servel set-env-file .env` — convenience command to set `env_file` in servel.yaml
 - `servel env set myapp KEY=VALUE` — update env var on running deployment without rebuild
 - NEXT_PUBLIC_* vars are kept in build-time env AND runtime (Next.js needs them at build time)
+- **Stale-key drift defense**: `servel secrets reconcile <app>` (interactive) or `prune_secrets: true` in servel.yaml (auto on every deploy). Removes encrypted secrets no longer declared and not injected by infra.
 
 ### Log Observability
 
@@ -1007,7 +1093,10 @@ port: 3000
 # (omit entirely)                      # autodetect — GitHub→ghcr, GitLab→registry.gitlab.com
 
 # Cloudflare proxy support
-cloudflare: true                      # Skip HTTPS redirect (prevents redirect loops with Flexible SSL)
+# PREFER Full (strict) on the CF dashboard + leave this UNSET so Servel keeps the
+# origin HTTPS redirect on as defense-in-depth. Flexible = CF↔origin plaintext.
+# Verify posture with: servel verify cf-ssl <project>
+cloudflare: true                      # ONLY for CF Flexible SSL; skips HTTPS redirect to avoid loops
 www: redirect                         # WWW handling: "redirect" (www->apex), "redirect-to-www" (apex->www)
 
 # Environment
@@ -1099,7 +1188,7 @@ routes:
   - type: http                        # http, tcp, udp, redirect
     domain: app.example.com
     port: 3000
-    cloudflare: true                  # Per-route Cloudflare proxy support
+    cloudflare: true                  # Per-route CF support (Flexible only — prefer Full (strict) + leave unset)
     auth:                             # Per-route authentication
       type: basic
       username: admin
@@ -1370,7 +1459,8 @@ environments:
 | Smart mode wrong | Use `--no-smart` for full rebuild |
 | Routing broken | `servel traefik test <domain>` then `servel traefik debug <name>` |
 | Health check fails | `servel verify health <name>` |
-| Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR set Cloudflare SSL to Full (strict) |
+| Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR (preferred) switch CF SSL/TLS to Full (strict) and leave `cloudflare` unset |
+| CF↔origin leg unencrypted | Run `servel verify cf-ssl <project>` — Flexible mode = plaintext between CF and origin. Switch CF SSL/TLS to Full (strict). |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
 | Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
