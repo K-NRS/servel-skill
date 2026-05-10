@@ -219,6 +219,9 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
 - `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way.
+- **Secret-store reconciliation** — `servel deploy` is additive: it writes declared secrets but never removes orphans. Stale values silently shadow infra-injected values via the `if !exists` rule. Two ways to fix drift:
+  - `servel secrets reconcile <app>` — interactive cleanup (`--dry-run` to preview, `--yes` to skip prompts).
+  - `prune_secrets: true` in servel.yaml — auto-reconcile on every `servel deploy`. Orphan = in encrypted store, not in `secrets:` block, not injected by an `infra:` link.
 - `--public` -- Force linked infra to use public-domain hostnames (overrides per-link `access:internal` in servel.yaml). Mutually exclusive with `--internal`.
 - `--internal` -- Force internal Docker DNS for every link; **errors** if any linked infra isn't on the deploy target swarm.
 - `--no-registry` -- Skip registry push
