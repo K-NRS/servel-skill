@@ -109,6 +109,32 @@ servel logs myapp -f        # Explicit name required
 
 This applies to: `logs`, `exec`, `inspect`, `env`, `restart`, `stop`, `start`, `scale`, `redeploy`, `rollback`, `rm`, `deploy`, and most service-targeting commands.
 
+### Agent Workflow: Live Introspection Inside a Project
+
+When you (the agent) are working in a repo with `.servel/state.json`, you have direct read access to the live production deployment for that project — no SSH, no credentials, no manual server-name resolution. Use this **before guessing** what's happening in production:
+
+| Goal | Command (run from project root) |
+|---|---|
+| See what production is doing right now | `servel logs -f` |
+| Diagnose a recent crash / 5xx | `servel logs --tail 200` or `servel logs --since 10m` |
+| Check build output of the last deploy | `servel logs --build` |
+| HTTP request flow (status, latency, client IP) | `servel logs --http --tail 50` (after `servel logs config --access-logs`) |
+| What env the container actually sees | `servel env vars` |
+| What's encrypted vs plaintext | `servel secrets ls` / `servel env vars --show-source` |
+| Service health, replicas, image, command | `servel inspect` |
+| Open a shell in the live container | `servel exec sh` |
+| Run a one-off in production (migration, REPL, etc.) | `servel exec -- <cmd>` |
+| Verify routing + SSL + DNS | `servel verify <name>` (or omit name) |
+| Linked infra logs (e.g. postgres slow query log) | `servel logs @<infra-name> -f` |
+| Linked infra shell (run psql, redis-cli, etc.) | `servel exec @<infra-name> --service db sh` |
+| What domains/routes are live | `servel routes` / `servel domains ls` |
+
+**Heuristic:** if `.servel/state.json` exists, never speculate about prod behavior — ask servel. `servel logs` and `servel env vars` are cheaper, more accurate, and more current than reading the codebase + guessing.
+
+**Multi-environment projects:** if `.servel/state.staging.json` also exists, target it with `--env staging` on any of the above (e.g. `servel logs -f --env staging`).
+
+**No `.servel/` directory?** The project hasn't been deployed yet — these commands won't auto-resolve. Either deploy first (`servel deploy --verbose`) or pass an explicit name (`servel logs myapp -f`).
+
 ## Service Addressing (Symbol Prefixes)
 
 Most commands that target a service (exec, logs, inspect, stats, restart, stop, start, scale, env, remove) support symbol prefixes:
@@ -533,6 +559,34 @@ servel traefik restart                # Restart Traefik
 ```
 
 **Slow uploads 502 at ~60s?** Traefik v3.x ships a 60s `entryPoints.<name>.transport.respondingTimeouts.readTimeout` default. Servers provisioned before that knob was set in `traefik/config.go` inherit the broken default. Run `servel doctor --remote <name> --fix` — the `Traefik Timeouts` check resolves the live `traefik.yml` from the docker mount (handles legacy `traefik.yaml`), fills in `300s` only when missing (never downgrades higher operator-chosen values), and force-restarts Traefik. Idempotent.
+
+### Visitor IP / Forwarded Headers
+
+**Tell apps to read `X-Real-Ip`. One header, one line, every language.** Servel preconfigures Traefik's entrypoints with `forwardedHeaders.trustedIPs = <all Cloudflare CIDRs>`, so Traefik computes `X-Real-Ip` as the rightmost-not-trusted entry of `X-Forwarded-For` (falling back to socket source). Result: with or without Cloudflare in front, `X-Real-Ip` is the visitor IP. Spoofing via injected XFF entries from outside the trusted set is structurally impossible.
+
+```js
+const ip = req.headers['x-real-ip'];     // Node / Express / Next.js
+```
+```go
+ip := r.Header.Get("X-Real-Ip")          // Go
+```
+```py
+ip = request.headers.get("x-real-ip")    # FastAPI / Starlette
+ip = request.META.get("HTTP_X_REAL_IP")  # Django
+```
+```ruby
+ip = request.remote_ip                   # Rails (walks XFF, equivalent)
+```
+
+**Do not** recommend the multi-fallback CF-Connecting-IP → XFF → socket pattern unless the app already uses it — that's defensive overkill on a Servel deploy. `X-Real-Ip` is sufficient.
+
+**When to mention other headers:** `CF-Connecting-IP` lets the app distinguish "came via CF" from "direct hit" (same IP value, different presence). `X-Forwarded-For` is for audit / multi-hop debugging. Socket `RemoteAddr` is the Traefik overlay IP — useless as visitor identity.
+
+**CF SSL mode matters:** "Flexible" silently terminates TLS at CF and re-opens plaintext to the origin. Run `servel verify cf-ssl <domain>` and require **Full (strict)** — Servel issues a real LE cert at the origin.
+
+**CF IP range drift:** static slices `CloudflareIPv4Ranges` / `CloudflareIPv6Ranges` in `src/internal/traefik/config.go` (current as of Jan 2026). If CF adds edges, refresh the slices and redeploy Traefik (`servel remote provision` or restart `~traefik`). Yearly refresh is fine.
+
+Full reference: `website/content/docs/reference/visitor-ip.mdx`.
 
 ### Verification
 
