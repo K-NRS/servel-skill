@@ -54,6 +54,43 @@ servel-skill/
     └── TEMPLATES.md      # Template building guide (loaded on-demand)
 ```
 
+## Recommended: Pair with a SessionStart Hook (Claude Code)
+
+The skill loads when the user's prompt matches its description (deploy / infra / production-debugging intents) or when they explicitly invoke `/servel`. To make the skill activate **the moment you `cd` into a servel-managed project** — even before you've typed anything — add a `SessionStart` hook that detects `.servel/` or `servel.yaml` in the working directory and emits a reminder.
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -d .servel ] || [ -f servel.yaml ]; then echo 'Servel project detected (.servel/ or servel.yaml present). Invoke the /servel skill for deployment, infra, logs, exec, env, secrets, domains, and routing. Inside the project, servel commands auto-detect the deployment name from .servel/state.json — run servel logs / exec / inspect / env without arguments.'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Effect**
+
+| Setup | Trigger path |
+|---|---|
+| Skill description alone | Activates when user prompt mentions deploy/infra/production/logs/etc. |
+| **+ SessionStart hook** | Activates **on session start** whenever cwd contains `.servel/` or `servel.yaml`, before the user types anything. |
+
+The hook is silent in non-servel projects (the `if` guards it), so adding it globally has zero noise.
+
+**Why this matters:** the skill knows the live-introspection workflow — `servel logs -f`, `servel env vars`, `servel exec sh`, `servel inspect`, `servel logs --http`, all auto-resolving the project from `.servel/state.json`. Without the hook, agents may speculate about production behavior from source code instead of asking the running deployment. With the hook, the live-data path is the default.
+
+Equivalents for other agents (Gemini CLI, OpenCode, Codex) — check the agent's session-start / pre-prompt hook docs.
+
 ## Links
 
 - [Servel Website](https://servel.dev)
