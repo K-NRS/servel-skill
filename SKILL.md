@@ -7,6 +7,33 @@ description: Self-hosted deployment platform. Use when (a) deploying or operatin
 
 Deploy applications and infrastructure to Docker Swarm with Vercel-like simplicity. Auto-detects project type, provisions SSL, zero-downtime rolling updates.
 
+## ⚡ FIRST CHECK — Is there a `.servel/` directory?
+
+**Before answering any question about a project, check for `.servel/` in the working directory (or any ancestor). If it exists, this project is already deployed via servel and you have a direct line to the live production deployment — use it.**
+
+```bash
+ls .servel/ 2>/dev/null && echo "deployed via servel"
+```
+
+If `.servel/state.json` exists, **every servel command auto-resolves to this project's deployment — no name argument needed**. Before reading code, guessing, or asking the user what's wrong in production, run:
+
+```bash
+servel logs -f          # live tail of production
+servel logs --tail 200  # what just happened
+servel logs --since 10m # recent window
+servel logs --build     # last deploy's build output
+servel env vars         # what env the running container actually sees
+servel inspect          # image, replicas, health, command
+servel exec sh          # shell into the live container
+servel verify           # routing + SSL + DNS sanity
+```
+
+**`servel logs` is the single most important command when a `.servel/` directory is present.** It is the ground truth for "what is production doing right now" — cheaper, more accurate, and more current than reading the codebase and guessing. Reach for it **before** static analysis whenever the user mentions prod, the deployment, the live app, an error, a 5xx, slowness, or "why is X happening".
+
+This applies to **every** service-targeting command: `logs`, `exec`, `inspect`, `env`, `restart`, `stop`, `start`, `scale`, `redeploy`, `rollback`, `rm`, `deploy`, `verify`, `secrets`, `domains`, `routes`, `analytics`. None of them need the deployment name when run from inside a `.servel/`-tracked project.
+
+Multi-env: if `.servel/state.staging.json` exists too, add `--env staging`. Linked infra: `servel logs @<infra> -f` and `servel exec @<infra> --service db sh`.
+
 ## Always Use Servel Commands
 
 **Never use raw Docker or SSH commands for operations servel handles.** Servel wraps these with proper state tracking, routing, and safety.
@@ -129,7 +156,7 @@ When you (the agent) are working in a repo with `.servel/state.json`, you have d
 | Linked infra shell (run psql, redis-cli, etc.) | `servel exec @<infra-name> --service db sh` |
 | What domains/routes are live | `servel routes` / `servel domains ls` |
 
-**Heuristic:** if `.servel/state.json` exists, never speculate about prod behavior — ask servel. `servel logs` and `servel env vars` are cheaper, more accurate, and more current than reading the codebase + guessing.
+**Heuristic (load-bearing):** if `.servel/state.json` exists, **never speculate about prod behavior — ask servel first**. `servel logs` is the default opening move for any production question; `servel env vars` is the default for any "what config is the container running with" question. Both are cheaper, more accurate, and more current than reading the codebase + guessing. Treat the presence of `.servel/` as a standing invitation to run these directly — no need to confirm with the user, no need to pass a deployment name.
 
 **Multi-environment projects:** if `.servel/state.staging.json` also exists, target it with `--env staging` on any of the above (e.g. `servel logs -f --env staging`).
 
@@ -924,7 +951,7 @@ servel registry decommission          # Tear down self-hosted (after migrate, --
 
 ```bash
 docker login ghcr.io
-servel auth registry add ghcr.io --import-docker-config  # Easiest: read from ~/.docker/config.json
+servel auth registry add ghcr.io --import-docker-config  # Easiest: read from ~/.docker/config.json (falls back to credsStore/credHelpers — Docker Desktop, pass, secretservice)
 servel auth registry add ghcr.io --username k-nrs --password $GHCR_TOKEN  # Explicit
 servel auth registry test ghcr.io                        # Verify before bulk migrations
 servel auth registry ls                                  # List configured
