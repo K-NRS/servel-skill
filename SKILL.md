@@ -204,7 +204,11 @@ servel ps                             # List deployments
 servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
 servel logs <name> -f                 # Follow logs
-servel watch <name>                   # Watch deploy progress (TUI)
+servel watch <name>                   # Watch deploy progress — high-level phases/steps TUI (reads progress.json)
+servel watch <name> --follow          # Wait for deploy to start, then watch
+servel attach [name|id-prefix]        # Stream raw build.log of in-progress build (BuildKit, nixpacks, bun output with full ANSI color via PTY)
+                                      # No-arg: current dir's project. Ctrl+C detaches; build keeps running. Aliases: at
+                                      # Use watch for "where am I in the pipeline?", attach for "why is this failing?"
 servel rm <name>                      # Remove
 servel rollback <name>                # Rollback version
 servel promote <src> <tgt>            # Promote deployment (env + domains)
@@ -729,7 +733,9 @@ servel config validate ./draft.yaml --server                  # dry-run a yaml f
 
 **Allocating an unset section is safe**: setting one leaf inside a previously-nil section (build_queue, log_retention, build_cache, registry_retention, access, auto_update, telemetry) populates siblings from canonical defaults — never zero-initializes them. So `servel config set build_queue.max_concurrent 2` on a fresh server writes `{enabled: true, max_concurrent: 2, queue_timeout: 10m}`, not `{max_concurrent: 2}` with `enabled: false`.
 
-**Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
+**Build queue is cluster-aware on multi-node remotes**: `max_concurrent` becomes per-host (each host gets its own slot pool), and queued deploys fan out across hosts instead of serializing through the manager. Override individual hosts with `build_queue.per_host_concurrency` (map of `hostname → slot count`; hostname is used — not swarm node ID — so config survives node rejoins). The queue tracks BuildKit cache affinity (last-built host per project) and per-host RAM reservations so parallel acquires don't pile onto a stale free-RAM snapshot. FIFO + priority ordering is preserved across hosts via a fairness gate (entries past total cluster capacity wait). Single-host remotes keep the legacy global pool — no behavior change.
+
+**Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments,per_host_concurrency}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
 
 **Note:** `env copy` targets plain Docker service env vars; `secrets copy` targets the encrypted store. Same endpoint syntax and flags for both (see `secrets copy` section above). Use `env copy` for non-sensitive config, `secrets copy` for credentials.
 
