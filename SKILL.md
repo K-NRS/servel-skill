@@ -197,6 +197,7 @@ servel deploy --verbose --new                   # Force new deployment with uniq
 servel deploy --verbose --supersede             # Cancel prior in-flight build for this project, then deploy (skip queue wait)
 servel deploy --verbose --dashboard             # Real-time TUI dashboard during deploy
 servel deploy --verbose --save                  # Persist flags to servel.yaml
+servel deploy --exclude target --exclude web/.next  # Extra excludes (merged with built-ins + .servelignore)
 servel deploy --memory 1g --cpu 0.5   # Resource limits
 servel deploy --quiet                 # Minimal output (only final result)
 servel ps                             # List deployments
@@ -266,6 +267,23 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--save` -- Persist deploy flags to servel.yaml
 - `--skip-scan` -- Skip vulnerability scanning
 - `--scan-block <severity>` -- Block on severity (critical, high, medium, low)
+- `--include <pattern>` -- Override exclusions (e.g. `--include .next` for pre-built)
+- `--exclude <pattern>` -- Extra exclusion patterns (repeatable; merged with built-ins + `.servelignore`)
+
+### Package Selection (what gets shipped)
+
+Build context exclusion layers (later overrides earlier):
+1. Built-in `DeployExclusions` (`.git`, `node_modules`, `.next`, `dist`, `build`, `vendor`, `.env*`, `*.log`, `coverage`...)
+2. `.gitignore` (honored automatically in git repos)
+3. **`.servelignore`** -- gitignore-style file at project root; always loaded. Use for git-tracked-but-don't-ship paths (e.g. `target/` build artifacts):
+   ```
+   target
+   web/.next
+   *.tsbuildinfo
+   ```
+4. `servel.yaml: deploy.exclude_patterns: [...]` -- explicit, in-config
+5. `--exclude <pattern>` -- one-shot CLI override
+6. `--include <pattern>` / `deploy.include` -- un-exclude (for `--skip-build` shipping `.next/`, `dist/`, etc.)
 
 ### Deploy Aliases
 
@@ -296,7 +314,7 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | Queue | rabbitmq |
 | Search | meilisearch, typesense |
 | Platform | supabase, supabase-ha, chatwoot, typebot, convex, affine, forgejo, clawdbot, maily, surfsense |
-| Analytics | plausible, umami, openreplay |
+| Analytics | plausible, umami, openreplay, highlight |
 | Monitoring | prometheus, grafana, loki, promtail, uptimekuma, gatus, peekaping |
 | Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
 | Storage | minio |
@@ -585,6 +603,8 @@ ip = request.remote_ip                   # Rails (walks XFF, equivalent)
 **CF SSL mode matters:** "Flexible" silently terminates TLS at CF and re-opens plaintext to the origin. Run `servel verify cf-ssl <domain>` and require **Full (strict)** — Servel issues a real LE cert at the origin.
 
 **CF IP range drift:** static slices `CloudflareIPv4Ranges` / `CloudflareIPv6Ranges` in `src/internal/traefik/config.go` (current as of Jan 2026). If CF adds edges, refresh the slices and redeploy Traefik (`servel remote provision` or restart `~traefik`). Yearly refresh is fine.
+
+**OpenReplay infra (sessions → GeoIP):** the bundled nginx-openreplay needs the real client IP for country resolution. Swarm ingress source-NATs incoming connections, so X-Forwarded-For collapses to `10.0.0.x` on multi-node and every session resolves to "Unknown Country". The template's `BehindCloudflare` var defaults to `auto` — it probes the domain at deploy time and rewrites nginx to use `CF-Connecting-IP` when Cloudflare is detected. Override with `true` (force) or `false` (legacy XFF) only when auto-detection is wrong.
 
 Full reference: `website/content/docs/reference/visitor-ip.mdx`.
 
@@ -1414,6 +1434,9 @@ deploy:
   include:                            # Override exclusions
     - ".next"
     - "dist"
+  exclude_patterns:                   # Extra excludes merged with built-ins + .servelignore
+    - "target"
+    - "web/node_modules"
   aliases:
     preview:
       ttl: "7d"
