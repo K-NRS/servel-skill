@@ -940,6 +940,7 @@ servel registry rm <repo>:<tag>       # Same resolution as tags
 servel registry info                  # Registry info + capabilities
 servel registry du                    # Per-repo disk usage (self-hosted; hint at >5GB unique)
 servel registry retain --keep 10      # Trim old versions, keep 10 newest per repo (dry-run + --older-than 30d)
+servel registry migrate               # Auto-detect project + remote from .servel/state.json (run from project dir)
 servel registry migrate <project>     # Move project to its auto-detected registry (ghcr/gitlab)
 servel registry migrate --all --continue-on-error  # Bulk migrate
 servel registry decommission          # Tear down self-hosted (after migrate, --keep-volume for safety)
