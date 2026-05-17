@@ -36,7 +36,16 @@ Multi-env: if `.servel/state.staging.json` exists too, add `--env staging`. Link
 
 ## Always Use Servel Commands
 
-**Never use raw Docker or SSH commands for operations servel handles.** Servel wraps these with proper state tracking, routing, and safety.
+**Native servel commands are safer than ssh+docker.** Every native verb:
+- Reads/writes `/var/servel/` state atomically (no half-applied changes on crash)
+- Records to the audit log (`servel audit list` — who/what/when, forensics-grade)
+- Is multi-node-correct (SSH-hops to the node hosting the container; raw docker on a manager misses worker containers)
+- Validates inputs and preserves invariants (Traefik labels, networks, constraints, healthchecks — easy to drop with raw `docker service update`)
+- Triggers downstream reconciliation (drift detection, post-deploy probes, rollback on failure, alert dispatch)
+- Survives upgrades — raw docker commands codify today's swarm shape; servel commands are forward-compatible
+- Is idempotent and rerunnable — raw `docker service update` flag-bombs are not
+
+Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-node correctness, invariants — all gone. Even when the immediate effect looks identical, you've taken on silent risk. **Default: native command. Fallback to ssh+docker only when no native verb exists, and say so out loud.**
 
 | Instead of... | Use servel |
 |---|---|
@@ -44,6 +53,10 @@ Multi-env: if `.servel/state.staging.json` exists too, add `--env staging`. Link
 | `docker exec` | `servel exec <name> sh` or `servel exec <name> -- cmd` |
 | `docker logs` | `servel logs <name> -f` |
 | `docker service create/update/rm` | `servel deploy`, `servel rm` |
+| `docker service scale X=N` | `servel scale <name> N` |
+| `docker service scale X=0` (stop) | `servel stop <name>` (or `servel scale <name> 0`) |
+| `docker service scale X=1` (start after stop) | `servel start <name>` (or `servel scale <name> 1`) |
+| `docker service update --force` | `servel restart <name>` |
 | `docker stack/compose` | `servel deploy` (compose auto-detected) |
 | `docker ps` / `docker service ls` | `servel ps`, `servel node ps` |
 | Manual DB setup | `servel add postgres --name mydb` |
@@ -59,6 +72,207 @@ Multi-env: if `.servel/state.staging.json` exists too, add `--env staging`. Link
 | Eyeballing benchmarks to guess if the fast path is actually fast at your data size | `servel bench migration --target <node> --size 1GB` (deploys ephemeral postgres, measures both strategies, prints comparison table) |
 | Grepping `journalctl` to figure out what migrated, when, and how long it took | `servel move history` (audit trail at `/var/servel/migrations/history.jsonl`) |
 | `du -sh /var/servel/* /var/lib/docker/*` to find what's eating disk | `servel df --growers` (curated 16-path scan + drills into volumes, classifies as orphan/active/system/archive/migrate/backup) |
+
+### 🚫 Banned escape hatch: `servel ssh <host> -- docker service ...`
+
+**Before emitting any `servel ssh <host> -- "docker service <verb> ..."` command, STOP.** This is the most common dogfooding leak — using `servel ssh` as a transport for raw docker bypasses state tracking, audit logs, drift detection, and rollback safety. Rewrite to the native verb:
+
+| If you typed... | Use instead |
+|---|---|
+| `servel ssh H -- "docker service scale X=N"` | `servel scale <addr> N` |
+| `servel ssh H -- "docker service scale X=0"` | `servel stop <addr>` |
+| `servel ssh H -- "docker service scale X=1"` | `servel start <addr>` |
+| `servel ssh H -- "docker service update --force X"` | `servel restart <addr>` |
+| `servel ssh H -- "docker service rm X"` | `servel rm <addr>` |
+| `servel ssh H -- "docker service update --image Y X"` | `servel redeploy <addr>` or `servel rollback <addr>` |
+| `servel ssh H -- "docker service ls"` | `servel ps --remote H` |
+| `servel ssh H -- "docker service logs X"` | `servel logs <addr> -f` |
+| `servel ssh H -- "docker exec ..."` | `servel exec <addr> -- ...` |
+
+`<addr>` = symbol-prefixed name: `myapp` (deployment), `@mydb` (infra), `~traefik` (system).
+
+**Service name doesn't fit `servel-{name,infra-name,system-name}-*`?** That service was created outside servel's addressing contract. Options, in order:
+1. **Rename to fit the taxonomy** so it becomes addressable (`servel-system-<name>` for a daemon you control, redeploy via `servel deploy` for an app).
+2. **Resolve manually with `servel ps --remote H --all`** to find the closest servel-managed equivalent.
+3. **Last resort only:** fall back to `servel ssh H -- docker ...` *and explain why no native verb fits in the same response* — never silently. If this happens, it's a gap in servel — file it.
+
+`servel ssh` is for interactive shells and one-off diagnostic commands that have no servel equivalent (kernel checks, `journalctl`, `ip`, `iptables` reads, package queries). It is **not** a docker-CLI proxy.
+
+## Complete Capability Map — scan this BEFORE reaching for ssh+docker
+
+The full top-level command set (from `servel --help`, current as of 2026-05-17). Every row is a native verb; if your task fits a row, **use it** — do not shell out. Subcommands listed after `:` are the most common; run `servel <cmd> --help` for the full subtree.
+
+### Lifecycle (apps + infra)
+| Command | What it does |
+|---|---|
+| `deploy` | Build + push + create/update service + post-deploy probe + auto-heal. Compose / Dockerfile / preset / nixpacks auto-detected. |
+| `redeploy` | Re-apply stored spec without source code (good for env-only changes; respects `servel.yaml` edits since 2026-05-15 — use `--no-refresh` to disable). |
+| `rollback` | Roll to previous image; same convergence + probe contract as deploy. |
+| `restart` | Force-update service (same as `docker service update --force`, but tracked). |
+| `scale <name> <N>` | Replicas → N. `0` = stop, ≥1 = start. Works with deployment / `@infra` / `~system`. |
+| `stop <name>` / `start <name>` | Aliases for `scale 0` / `scale 1`. |
+| `rm` / `remove` | Tear down (deployment, infra, system service). Preserves volumes by default. |
+| `rename` | Rename a deployment (state-aware). |
+| `promote <src> <tgt>` | Transfer env + domains (swap / merge / cleanup-source / rebuild flags). |
+| `preview` | Create a TTL'd preview deployment. |
+| `attach` / `watch` | Watch in-flight build (raw log stream vs. phase TUI). |
+| `abort` | Cancel in-progress deploy. |
+| `resume` | Continue failed deploy from last successful step. |
+
+### Inspect / observe
+| Command | What it does |
+|---|---|
+| `ps` / `ls` / `list` | List deployments (`--all-servers`, `--tree`, `--all`). |
+| `inspect` / `info` | Full deployment detail (image, replicas, health, command). |
+| `logs <addr> [-f]` | Logs for deployment / `@infra` / `~system`. Per-task streaming since 2026-04-13. |
+| `events` | Deployment events timeline. |
+| `history` / `versions` | Past deploys + available images. |
+| `find <name>` | Cross-server search (works for `@infra` too). |
+| `stats` | Container resource usage (CPU/mem/net/io). |
+| `url` / `open` | Resolve / open primary URL in browser. |
+| `dashboard` | One-screen view of every optional subsystem. |
+| `deck` | Interactive TUI dashboard. |
+| `verify` | Health + SSL + DNS + routing sanity. |
+| `validate` | Validate `servel.yaml` before deploy. |
+| `detect` | Show what auto-detection would do for current project. |
+| `doctor` | Client/server connectivity + cluster-wide health (`migration` subcommand for end-to-end migration self-test). |
+| `df` | Disk usage (`--growers` for curated 16-path scan). |
+| `queue` | Build queue status. |
+
+### Exec / shell / tunnel
+| Command | What it does |
+|---|---|
+| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). |
+| `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
+| `attach` | Stream live build log (Ctrl+C detaches, build continues). |
+| `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
+| `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. |
+| `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
+| `connect <name>` | Print infra connection details (URL, user, password). |
+
+### Infrastructure (`servel infra ...` + `servel add`)
+| Subcommand | What it does |
+|---|---|
+| `add <type> [name]` | Add infra from hub template (46 types: postgres, redis, mongodb, supabase, chatwoot, openreplay, ...). Supports `--ha`, `--replicated`, `--prefix` bundles. |
+| `infra` (no args) | List all infra. |
+| `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services. |
+| `infra repair @<name>` | Auto-rsync bind sources, alert on drift. |
+| `infra backup / restore` | Per-infra backup. |
+| `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. |
+| `infra logs @<name> [--service X]` | Multi-service infra logs. |
+| `infra inspect / status / vars / labels / domains / customize / archives` | Read views. |
+| `infra start / stop / restart / remove / rename / update / upgrade / rotate` | Lifecycle. |
+| `infra run <name> <action>` / `infra run-hooks` | Lifecycle hooks declared in template. |
+| `infra version <name>` | Stack version. |
+| `link <infra>` / `unlink <infra>` | Wire infra → app (auto-injects env vars, internal DNS since 2026-05-09). |
+| `templates` / `hub` | Manage templates, browse Hub registry. |
+
+### Data / state / volumes / migration
+| Command | What it does |
+|---|---|
+| `data bind / unbind / heal / migrate / status / check / volumes` | Per-service data binding (which node holds the data). |
+| `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. |
+| `move history` | Audit trail of past migrations. |
+| `volumes [list|inspect|rm]` | Docker volume management. |
+| `storage status / enable / doctor` | DRBD/LINSTOR distributed storage substrate. |
+| `bench migration --target <node> --size 1GB` | Measure migration strategies head-to-head. |
+
+### Config / env / secrets
+| Command | What it does |
+|---|---|
+| `config [set|get|list|wizard|validate]` | Reflection-based config edit (client `~/.servel/config.yaml` or server `/var/servel/config.yaml`). |
+| `env [list|set|copy]` | Plaintext env vars. No rebuild for `set`. |
+| `set-env-file` | Wire `env_file` into `servel.yaml`. |
+| `secrets [list|get|set|delete|rotate|rotate-all|pull|import|export|copy|reconcile|scan|migrate]` | Age-encrypted secrets. `scan` finds hardcoded secrets in code. |
+
+### Domains / SSL / routing
+| Command | What it does |
+|---|---|
+| `domains [list|add|remove|update|status|redirect|list-redirects|remove-redirect]` | Domain + SSL + redirect management. |
+| `dns [verify|cleanup]` | DNS record verification + cleanup. |
+| `traefik [status|logs|restart|routes|certs|test|debug|pin|unpin|where]` | Traefik introspection + control. |
+| `routes [debug]` | Route-level debugging. |
+| `verify [cf-ssl|...]` | SSL/DNS/health sanity checks. |
+| `verify cf-ssl` | Cloudflare SSL-mode probe (Full strict / Full / Flexible / Off). |
+
+### Servers / nodes / cluster
+| Command | What it does |
+|---|---|
+| `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. |
+| `servers [check]` | Multi-server dashboard. |
+| `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** |
+| `capacity` / `cap` / `forecast` | Capacity forecast + node recommendations. |
+| `units` | Unit-based capacity overview. |
+| `rebalance` | Auto-redistribute services (memory / tasks strategies). |
+| `reconcile` | Discover unlabeled services + missing state. |
+| `migrate` | Migrate `/var/servel/` filesystem layout to latest version. |
+| `prune` | Clean up Docker build artifacts. |
+| `cleanup` | Remove expired environments. |
+
+### Security / access / audit
+| Command | What it does |
+|---|---|
+| `auth [enable|disable|update|status|login|logout|whoami|registry]` | BasicAuth on deployments + CLI identity + Docker registry creds. |
+| `access [user|role|scope|permissions|setup|invite|join|leave|token|request|audit|request-hint]` | Multi-user team access + ACL. |
+| `ban <ip|name>` / `unban` / `ban [ls|clear|sync]` | Server-wide and per-deployment IP bans (Traefik denyip plugin). |
+| `bastion [init|install|uninstall|start|stop|restart|status|sessions|kick|session [list|play|info|commands]]` | SSH bastion with session recording. |
+| `audit [list|stats|export|rotate]` | Audit log (forensics-grade who/what/when). |
+
+### CI / CD / jobs / deps
+| Command | What it does |
+|---|---|
+| `ci [init|setup|pipelines|pipeline-init|run|retry|cancel|status|logs|recent|artifacts|webhook|keys|server|list]` | CI/CD pipelines (GitHub Actions / GitLab CI / built-in). |
+| `job [add|ls|rm|pause|resume|run|history|logs]` | Cron-style scheduled jobs. |
+| `deps [app]` | Show app dependencies + status. |
+
+### Monitoring / analytics / alerts
+| Command | What it does |
+|---|---|
+| `alerts [enable|disable|setup|add|remove|test|pause|resume|history|config|monitored|status]` | Telegram/Slack/Discord/webhook alerts with pressure detection. |
+| `analytics` | Visitor analytics from Traefik logs (`--cluster` for cluster view). |
+| `telemetry [status|enable|disable]` | Anonymous telemetry settings. |
+
+### Backups
+| Command | What it does |
+|---|---|
+| `backup [server|@infra]` | Backup archive of server or infra. |
+| `restore <file>` | Restore a backup archive. |
+| `restic [backup|restore|ls|status|config|install|schedule|repos|rclone]` | Restic-based incremental backups (the modern path). |
+| `infra backup <name>` / `infra restore <name>` | Per-infra (pg_dump-aware for postgres, supabase). |
+
+### Dev mode / local
+| Command | What it does |
+|---|---|
+| `dev [start|stop|list|logs|prune]` | Remote dev sandbox (bidirectional sync; `--link-env`, `--link-infra`, `--secrets`, `--team`). |
+| `init` | Initialize a new `servel.yaml`. |
+| `set-env-file` | Wire env_file into `servel.yaml`. |
+| `run <action>` | Run predefined action in deployed container (defined in `servel.yaml`). |
+
+### Registry / images
+| Command | What it does |
+|---|---|
+| `registry [info|ls|tags|du|rm|retain|migrate|decommission]` | Self-hosted + GHCR + GitLab + custom. |
+| `cache [...]` | Build cache management. |
+| `ports [list|show|stats|release]` | TCP/UDP port allocation tracking. |
+| `tags` / `tag` / `untag` | Tag deployments + infra. |
+
+### Self-management
+| Command | What it does |
+|---|---|
+| `upgrade` | Upgrade local servel binary. |
+| `upgrade-servers` | Bump all configured servers to match client version (`--rolling` for multi-node). |
+| `check-versions` | Audit server versions for compatibility. |
+| `daemon` | Auto-failover daemon controls (server side). |
+| `ai` | AI assistant session with full server context. |
+
+### Diagnostic-only / read-only escape hatches (use freely)
+`servel ssh <server>` for interactive shells, `journalctl`, `ip`, `iptables` reads, `dmesg`, package queries, kernel introspection, `top`/`htop`, `df -h /`, raw `docker info` / `docker version` / `docker node ls` read-only commands. **Reads = fine. Writes (`docker service ...`, `docker volume rm`, `docker network rm`) = banned.**
+
+### Decision: "is there a native verb for what I'm about to do?"
+1. Scan the categories above. If a row matches → use it.
+2. Not sure? `servel <closest-category> --help` lists every subcommand for that domain.
+3. Run `servel --help` to see all 80+ root commands.
+4. Genuine gap (no native verb)? Tell the user explicitly: "no native servel verb exists for X; falling back to `servel ssh ... -- <command>`". This is the *only* acceptable path to ssh+docker — and it's a signal to file the gap as a servel improvement.
 
 ## Decision Tree
 
@@ -179,6 +393,11 @@ servel logs @supabase --service postgres -f
 servel restart @chatwoot --service sidekiq
 ```
 
+**Off-taxonomy service names** (e.g. `servel-daemon-X`, `servel-foo`, hand-rolled docker services): the symbol prefixes won't resolve them because `DiscoverServices` matches `servel-{<name>,infra-<name>,system-<name>}-*` only. Do **not** reach for `servel ssh H -- "docker service ..."` as the workaround — see the banned escape hatch above. Correct moves:
+- If the service is a system daemon you control → rename it to `servel-system-<name>` so `~<name>` works.
+- If it's an app → redeploy via `servel deploy` so it lands at `servel-<name>-*` and becomes addressable.
+- Diagnostic-only? `servel ps --remote <h> --all` to list, then pick the right addressable equivalent. If none exists, you've found a servel gap — surface it.
+
 ## Server Targeting (`--remote`)
 
 The `--remote` flag is a **global flag** available on ALL commands. It targets a specific server instead of the default.
@@ -276,7 +495,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--domain, -d` -- Domain for routing
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
-- `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way.
+- `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way. Attachment is **reconciled on every deploy** (additive — operator-added networks survive), so adding a new link to an existing app and re-running `servel deploy` is enough; pre-fix, late-added links were silently dropped on the update path and showed up as `ENOTFOUND kong` / `ENOTFOUND <service>` at runtime.
 - **Secret-store reconciliation** — `servel deploy` is additive: it writes declared secrets but never removes orphans. Stale values silently shadow infra-injected values via the `if !exists` rule. Two ways to fix drift:
   - `servel secrets reconcile <app>` — interactive cleanup (`--dry-run` to preview, `--yes` to skip prompts).
   - `prune_secrets: true` in servel.yaml — auto-reconcile on every `servel deploy`. Orphan = in encrypted store, not in `secrets:` block, not injected by an `infra:` link.
@@ -412,7 +631,7 @@ servel infra rm db                    # Remove
 servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services, resilience drift A.1/C.1/F.1)
 servel infra check mydb               # Check specific infra
 servel infra check --all-nodes        # Cluster-wide resilience scan across every configured remote (skips swarm workers)
-servel infra repair @mydb             # Auto-rsync missing bind sources; alert on spec/state drift (resilience layer)
+servel infra repair @mydb             # Auto-rsync missing bind sources; coalesce duplicate node pins (`multiple_node_pins`); alert on spec/state drift (resilience layer)
 servel infra repair @mydb --dry-run   # Preview what the resilience layer would auto-repair
 servel infra sql @mydb schema.sql     # Run SQL file against database
 servel infra sql @mydb ./migrations   # Run all .sql files in directory (alphabetical order)
@@ -567,6 +786,8 @@ servel deploy --migrate-secrets       # Auto-detect *_KEY, *_SECRET, *_PASSWORD
 ```
 
 **Applying secret changes to a running service:** `secrets copy` writes to encrypted `.env.age` on disk. To push values into the live container, run `servel redeploy <name>` — it diffs `spec.Env ∪ .env.age` against the live service env and emits `--env-add` / `--env-rm` (preserves user-added env vars; degraded-safe if inspect fails). `servel deploy <name>` does **not** accept a bare deployment name (requires path or yaml alias) — use `redeploy` for config-only application from any directory.
+
+**Applying `servel.yaml` env edits without rebuild (2026-05-15):** `servel redeploy` now refreshes `spec.Env` from local `./servel.yaml` when its name matches the target deployment, BEFORE computing the env diff. Closes the trap where editing `servel.yaml` (e.g. swapping `localhost` for swarm hostnames) had no effect on `servel redeploy` because it only reapplied stored spec env. Secrets stay untouched. Use `--no-refresh` to opt out. Name mismatch (running redeploy from a different project's directory) skips refresh with a warning.
 
 **`secrets copy` / `env copy` endpoint syntax** (same for both):
 
