@@ -167,12 +167,20 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `link <infra>` / `unlink <infra>` | Wire infra → app (auto-injects env vars, internal DNS since 2026-05-09). |
 | `templates` / `hub` | Manage templates, browse Hub registry. |
 
+### Import / migration from other platforms
+| Command | What it does |
+|---|---|
+| `import vercel [slug...]` | Pull Vercel projects (decrypted envs + domains + framework + build overrides) into a staging dir at `~/servel-imports/<scope>/<slug>/`. Read-only against your FS by default; emits `servel.yaml`, `IMPORT.md` (recipe + DNS deltas + storage hints), `secrets.env` (0600). `--all` for whole-team imports, `--team`, `--token` / `$VERCEL_TOKEN`, `--target {production,preview,development}`, `--workspace`, `--concurrency`, `--overwrite`. `--clone` flag is reserved (returns error) — clone manually then `cp servel.yaml` into the repo. Storage envs (POSTGRES_URL, KV_URL, BLOB_READ_WRITE_TOKEN, EDGE_CONFIG) become recommendations, never auto-provisioned. |
+
 ### Data / state / volumes / migration
 | Command | What it does |
 |---|---|
 | `data bind / unbind / heal / migrate / status / check / volumes` | Per-service data binding (which node holds the data). |
 | `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. |
-| `move history` | Audit trail of past migrations. |
+| `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. |
+| `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
+| `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
+| `move history` | Audit trail of past migrations (intra-swarm AND cross-remote). |
 | `volumes [list|inspect|rm]` | Docker volume management. |
 | `storage status / enable / doctor` | DRBD/LINSTOR distributed storage substrate. |
 | `bench migration --target <node> --size 1GB` | Measure migration strategies head-to-head. |
@@ -685,6 +693,18 @@ servel doctor migration --target X    # End-to-end migration self-test (ephemera
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
 servel move history                   # Audit log of past migrations (newest first)
 servel move history @postgres --limit 50  # Filter to one infra
+
+# Cross-remote migration (different operator-managed remote, NOT same swarm)
+servel move @postgres --to-remote navola --to NAVOLA-Manager --plan  # ALWAYS safe — preflight only
+SERVEL_EXPERIMENTAL_CROSS_REMOTE=1 \
+  servel move @postgres --to-remote navola --to NAVOLA-Manager       # Execute (env gate required)
+servel move @postgres --to-remote navola --from-remote KN --plan    # Explicit source override
+servel move @supabase --to-remote navola --to manager --unsafe-leave-links  # Multi-service; acknowledge linked-app breakage
+servel move @postgres --to-remote navola --abort                   # Idempotent partial-state cleanup on both remotes
+servel move @postgres --to-remote navola --commit-source-cleanup    # Drop source after a successful migration (refuses if target not serving)
+# Trust model: operator orchestrates from local CLI holding SSH for both remotes; data
+# routes source → operator → target via two chained SSH sessions (operator-relayed restic).
+# Routes (Traefik dynamic configs) ship automatically; DNS update is the operator's job.
 servel dashboard                      # One-screen overview of every optional subsystem
 servel dashboard --remote KN          # Same, targeting a specific server
 servel dashboard --watch 5            # Refresh in place every 5 seconds (incident monitoring)
@@ -1794,7 +1814,8 @@ environments:
 | Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR (preferred) switch CF SSL/TLS to Full (strict) and leave `cloudflare` unset |
 | CF↔origin leg unencrypted | Run `servel verify cf-ssl <project>` — Flexible mode = plaintext between CF and origin. Switch CF SSL/TLS to Full (strict). |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
-| Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
+| Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Multi-domain deploys probe **every** HTTP route — a single failing route triggers respawn. Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
+| Service returned 404 from `servel-errors` middleware on one of its domains after a successful deploy | Stale-Traefik-VIP class: post-deploy neighbor churn de-routed a healthy service. The runtime routing watchdog (daemon, every 5min) catches this — after 3 consecutive failures it issues `docker service update --force <svc>`, rate-limited to 1/svc/hour. To force immediately: `servel restart <name>`. To disable the watchdog: `servel config set routing_health_enabled=false --server`. To disable just the auto-repair (keep alerts): `servel config set routing_auto_repair=false --server`. Audit log: `routing.probe` / `routing.repair`. Alert conditions: `deployment_routing_unreachable`, `deployment_routing_repaired`. |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
 | `name must be valid as a DNS name component` / `not a valid DNS label` | Name has dots/uppercase/underscores. Use DNS-safe name (`my-app-prod`) and pass domain via `--domain`, not `--name`. |
 | `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
