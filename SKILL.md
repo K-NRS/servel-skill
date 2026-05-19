@@ -202,11 +202,36 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `routes [debug]` | Route-level debugging. |
 | `verify [cf-ssl|...]` | SSL/DNS/health sanity checks. |
 | `verify cf-ssl` | Cloudflare SSL-mode probe (Full strict / Full / Flexible / Off). |
+| `cf token {set|unset|verify}` | Save / clear / verify a CF API token. Stored Age-encrypted server-side at `/var/servel/secrets/cf_token.age`. Required permissions: `Zone:Zone:Read`, `Zone:Zone Settings:Edit`, `Zone:SSL and Certificates:Edit`, `Zone:DNS:Edit` (last one optional). Use `--stdin` to pipe and avoid shell history capture. |
+| `cf zones [--json]` | List zones the token can see. |
+| `cf ssl [<mode>] [zone] [--all] [--json]` | Read or write per-zone SSL mode. Modes: `off`, `flexible`, `full`, `strict` (= UI "Full (strict)"). No args = read every zone. |
+| `cf ssl snapshot [-o file]` | Capture every zone's SSL mode to JSON (default `/var/servel/cf-ssl-snapshot-<ts>.json`). |
+| `cf ssl restore <file> [--dry-run]` | Re-apply a snapshot. |
+| `cf cert issue <domain ...> [--wildcard] [--days N] [--skip-root-install]` | Issue a CF Origin CA cert + install via Traefik file provider at `/var/servel/traefik/dynamic/origin-ca/`. `--wildcard <apex>` covers apex + `*.apex` (recommended). Default validity 5475 days (15y). First issue per server also installs the CF Origin CA root into `/usr/local/share/ca-certificates/` + `/etc/docker/certs.d/registry.srvl.app/ca.crt` so Docker push + servel preflight trust Origin CA-signed certs. |
+| `cf cert list [--json]` | Inventory installed Origin CA certs (parses PEMs on disk, shows CN/SANs/expiry). |
+| `cf cert revoke <safe-name>` | Remove a locally-installed cert + rebuild dynamic config. Use the `safe-name` from `cf cert list`. |
+| `cf dns ls [zone] [--json]` | List DNS records for a zone. |
+| `cf dns set <name> <type> <value> [--proxied] [--ttl N]` | Upsert a DNS record (PATCH if exists, POST if new). Zone inferred from name. |
+| `cf dns rm <name> [--type X]` | Delete one or all record types for a name. |
+| `cf status` | Overview: token + verify, zones with SSL mode, installed Origin CA certs (with expiry warnings), CA-root install state. |
+
+**Cert-rate-limit incident replay (2026-05-19 pattern).** After a Let's Encrypt rate-limit (5 certs/week per identifier) or a Traefik cert wipe, recovery is six lines instead of an hours-long firefight:
+
+```bash
+servel cf token set <token>                # one-time per server
+servel cf ssl snapshot -o /tmp/pre.json    # capture before
+servel cf ssl flexible --all               # emergency CF→origin plaintext
+servel cf cert issue --wildcard srvl.app   # Origin CA + auto-root install
+# (repeat per affected zone)
+servel cf ssl restore /tmp/pre.json        # back to strict / full
+```
+
+Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tightened enforcement, docs are stale). Use Flexible mode as the emergency stop, then issue Origin CA wildcards for the permanent fix. Origin CA is CF-trusted at the edge, browser-untrusted (fine — browser sees CF's edge cert).
 
 ### Servers / nodes / cluster
 | Command | What it does |
 |---|---|
-| `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. |
+| `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
 | `servers [check]` | Multi-server dashboard. |
 | `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** |
 | `capacity` / `cap` / `forecast` | Capacity forecast + node recommendations. |
@@ -688,7 +713,7 @@ servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
 servel doctor --remote KN             # Remote server diagnostics
-servel doctor --remote KN --fix       # Auto-repair safe issues (swap, middlewares, Traefik timeouts)
+servel doctor --remote KN --fix       # Auto-repair safe issues (swap, middlewares, Traefik timeouts, Traefik config drift, managed-label coverage)
 servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
 servel move history                   # Audit log of past migrations (newest first)
@@ -1815,7 +1840,7 @@ environments:
 | CF↔origin leg unencrypted | Run `servel verify cf-ssl <project>` — Flexible mode = plaintext between CF and origin. Switch CF SSL/TLS to Full (strict). |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
 | Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Multi-domain deploys probe **every** HTTP route — a single failing route triggers respawn. Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
-| Service returned 404 from `servel-errors` middleware on one of its domains after a successful deploy | Stale-Traefik-VIP class: post-deploy neighbor churn de-routed a healthy service. The runtime routing watchdog (daemon, every 5min) catches this — after 3 consecutive failures it issues `docker service update --force <svc>`, rate-limited to 1/svc/hour. To force immediately: `servel restart <name>`. To disable the watchdog: `servel config set routing_health_enabled=false --server`. To disable just the auto-repair (keep alerts): `servel config set routing_auto_repair=false --server`. Audit log: `routing.probe` / `routing.repair`. Alert conditions: `deployment_routing_unreachable`, `deployment_routing_repaired`. |
+| Service returned 404 from `servel-errors` middleware on one of its domains after a successful deploy | Stale-Traefik-VIP class. **Layered healing as of 2026-05-19**: post-deploy probe and 5-min runtime watchdog now (a) **skip stopped services** — `0/0` replicas means intentionally paused, not broken (audit `routing.skip_stopped`); (b) check for **orphan** — if the swarm service vanished, mark `routing.orphan` and stop retrying (closes the 600+ noisy-loop class observed on navola); (c) force-update the **backend** first; (d) if backend respawn doesn't restore reachability, **escalate** by force-updating Traefik itself (`servel-system-traefik`). Watchdog escalation threshold: 6 consecutive failed probes; Traefik-repair cooldown: 1h per service. **Cluster-wide budget:** max 4 Traefik force-updates per rolling 24h window — once exhausted, escalation is refused (audit `routing.traefik_repair_budget_exceeded`) and only backend repairs run. Founding incident 2026-05-19: a single 0/0 deployment caused hourly Traefik rolls that wiped acme.json each time and tripped LE 5/week per-domain rate limits cluster-wide. Skip-stopped + budget cap close that class together. To force immediately: `servel restart <name>`. To disable watchdog: `servel config set routing_health_enabled=false --server`. To disable auto-repair (keep alerts): `servel config set routing_auto_repair=false --server`. Audit log: `routing.probe`, `routing.repair`, `routing.traefik_repair`, `routing.orphan`, `routing.skip_stopped`, `routing.traefik_repair_budget_exceeded`. Alert conditions: `deployment_routing_unreachable`, `deployment_routing_repaired`. **Provider hardening:** Traefik static config now sets `exposedByDefault: false` + provider constraint `Label(\`servel.managed\`,\`true\`)`. Existing servers need `servel doctor --remote <name> --fix` to migrate retroactively (`Traefik Config` + `Managed Labels` checks). |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
 | `name must be valid as a DNS name component` / `not a valid DNS label` | Name has dots/uppercase/underscores. Use DNS-safe name (`my-app-prod`) and pass domain via `--domain`, not `--name`. |
 | `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
