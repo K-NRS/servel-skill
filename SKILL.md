@@ -295,7 +295,7 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `upgrade` | Upgrade local servel binary. |
 | `upgrade-servers` | Bump all configured servers to match client version (`--rolling` for multi-node). |
 | `check-versions` | Audit server versions for compatibility. |
-| `daemon` | Auto-failover daemon controls (server side). |
+| `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. |
 | `ai` | AI assistant session with full server context. |
 
 ### Diagnostic-only / read-only escape hatches (use freely)
@@ -712,8 +712,8 @@ servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
-servel doctor --remote KN             # Remote server diagnostics
-servel doctor --remote KN --fix       # Auto-repair safe issues (swap, middlewares, Traefik timeouts, Traefik config drift, managed-label coverage)
+servel doctor --remote KN             # Remote server diagnostics — checks include B-class detectors (ACME mount path drift, CF Origin CA root install, stale swarm node.id pins, undersized sensitive secrets) emitted by the daemon's resilience layer
+servel doctor --remote KN --fix       # DEPRECATED — per CLAUDE.md SELF-HEALING DISCIPLINE the daemon is the canonical self-healer. Today --fix still applies fixes for backwards compat (swap, middlewares, Traefik timeouts, Traefik config drift, ACME mount path, CF Origin CA root, managed-label coverage). Each class graduates to daemon-resident auto-repair with budget+circuit-breaker invariants in follow-up PRs; the flag will be removed once all classes are folded.
 servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
 servel move history                   # Audit log of past migrations (newest first)
