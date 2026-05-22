@@ -713,7 +713,7 @@ servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
 servel doctor --remote KN             # Remote server diagnostics — checks include B-class detectors (ACME mount path drift, CF Origin CA root install, stale swarm node.id pins, undersized sensitive secrets) emitted by the daemon's resilience layer
-servel doctor --remote KN --fix       # DEPRECATED — per CLAUDE.md SELF-HEALING DISCIPLINE the daemon is the canonical self-healer. Today --fix still applies fixes for backwards compat (swap, middlewares, Traefik timeouts, Traefik config drift, ACME mount path, CF Origin CA root, managed-label coverage). Each class graduates to daemon-resident auto-repair with budget+circuit-breaker invariants in follow-up PRs; the flag will be removed once all classes are folded.
+servel doctor --remote KN --fix       # DEPRECATED — per CLAUDE.md SELF-HEALING DISCIPLINE the daemon is the canonical self-healer. Today --fix still applies fixes for backwards compat (swap, middlewares, Traefik timeouts, Traefik config drift, ACME mount path, CF Origin CA root, managed-label coverage, missing tools restic/smartctl). Each class graduates to daemon-resident auto-repair with budget+circuit-breaker invariants in follow-up PRs; the flag will be removed once all classes are folded.
 servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
 servel move history                   # Audit log of past migrations (newest first)
