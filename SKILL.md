@@ -296,7 +296,9 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `upgrade-servers` | Bump all configured servers to match client version (`--rolling` for multi-node). |
 | `check-versions` | Audit server versions for compatibility. |
 | `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. |
-| `ai` | AI assistant session with full server context. |
+| `ai [question]` | Throwaway AI assistant session with full server context. Auto-detects agent (Claude Code → Codex → opencode); `--agent claude\|codex\|opencode`, `--remote <server>`, `--config <path>` (default `~/.servel/ai.yaml`). One-shot: `servel ai "why is myapp down?"`; interactive: bare `servel ai`. Spawns the agent wired to servel's MCP server over SSH (destructive tools enabled, gated by the agent's confirm prompt). |
+| `ai install <claude\|codex\|opencode>` | **Persistent** MCP registration — writes servel's MCP server into the agent's own config so any session can manage servers. Idempotent (re-run updates in place); merges are surgical (siblings preserved). `--remote a,b` (one entry per remote: `servel-a`, `servel-b`; default = configured default remote), `--global` (else project-local: `.mcp.json` / `.codex/config.toml` / `opencode.json`), `--read-only`, `--allow-destructive`, `--binary <path>`. **Secure default: read+write registered, destructive (rm/rollback/prune) OMITTED unless `--allow-destructive`.** `servel ai uninstall <agent>` reverses it. |
+| `mcp-server --remote <server>` | **Hidden.** Starts servel's MCP server on stdio for any MCP-compatible client (used by `servel ai` + `servel ai install`). Exposes up to 25 tools (14 read / 8 write / 3 destructive) that run `servel` over SSH. **Posture flags: `--read-only` (read tools only), `--allow-destructive` (include rm/rollback/prune). Default = read+write, destructive omitted** — a tool that isn't registered can't be called. Permission tiers (`~/.servel/ai.yaml`): read=auto, write=confirm, destructive=confirm; `allowed_remotes` allowlist + per-tool overrides (`deny`/`confirm`/`auto`). Tool behaviors: read/destructive **annotations** (hints for host UIs); **typed errors** `{error:{code,message,remediation}}` (codes: transient=retry-ok, not_found/denied/needs_confirmation=don't-retry, invalid_input, internal); destructive tools require **out-of-band elicitation** approval (LLM can't self-confirm); `servel_deploy` streams **progress** when given a `progressToken`; `servel_ps`/`servel_infra` accept `limit`+`cursor` **pagination** (returns `total`+`next_cursor`). |
 
 ### Diagnostic-only / read-only escape hatches (use freely)
 `servel ssh <server>` for interactive shells, `journalctl`, `ip`, `iptables` reads, `dmesg`, package queries, kernel introspection, `top`/`htop`, `df -h /`, raw `docker info` / `docker version` / `docker node ls` read-only commands. **Reads = fine. Writes (`docker service ...`, `docker volume rm`, `docker network rm`) = banned.**
@@ -455,6 +457,30 @@ servel deploy --remote staging-srv # Deploy to non-default server
 - Commands that already specify the server (e.g., `servel ssh KN`)
 
 **Tip:** Use `servel remote list` to see available remotes, `servel remote use <name>` to change default.
+
+## Non-Interactive / Agent Use (never hang on a prompt)
+
+When driving servel from an agent or script, a confirmation prompt with no TTY would block. Two global switches prevent that:
+
+- **`--yes`** — global flag on ALL commands; assumes yes to every confirmation prompt. One switch instead of remembering per-command `--force` vs `--yes`. (Long-only — no `-y` shorthand, to avoid collisions.) Example: `servel rm myapp --yes`, `servel prune --yes`.
+- **`SERVEL_NONINTERACTIVE=1`** (env) — asserts "I cannot answer prompts." Any command that would prompt **fails fast with a clear `use --flag` error instead of blocking** (mirrors `CI=true`). Set it once in the agent's environment.
+
+Without `--yes`/consent in a non-interactive context, destructive commands (`rm`, `prune`, `upgrade`) abort rather than proceed — a closed stdin is never read as "yes". Pair `SERVEL_NONINTERACTIVE=1` with explicit `--yes` (or `--force`) on the commands you intend to run unattended.
+
+## Machine-Readable Output (`--json`)
+
+`--json` is a **global flag** (bound on root, inherited by all commands). When set, the command emits a single structured JSON object/array on **stdout** and routes all human output (progress, spinners, banners) to **stderr** — so an agent can parse stdout deterministically. Color is auto-disabled. Errors still emit a JSON object with a populated `error` field AND a non-zero exit code (read both).
+
+Commands with a typed `--json` envelope (prefer these when parsing):
+- `ps --json` (status + integer `running_replicas`/`desired_replicas`), `infra --json`, `inspect --json`, `find --json`
+- `deploy --json` → `{deployment_id, name, url, status, elapsed_seconds, error}`
+- `rm --json` → `{name, removed, error}`
+- `add --json` → `{name, type, category, status, connection_env, ...}`
+- `doctor --json` → `{checks:[{name,status,message}], healthy, ...}`
+- `remote status --json` → full `ServerMetrics` (server_info, resources.cpu/memory/disk, services, network, …)
+- `logs --json` → `{lines:[...]}` bounded, or NDJSON (`{app,line}` per line) with `--follow`
+
+The MCP tools already return JSON internally and carry annotations (read-only / destructive hints) so MCP hosts can gate destructive calls in their own UI.
 
 ## Quick Reference
 
@@ -1028,7 +1054,9 @@ servel config validate ./draft.yaml --server                  # dry-run a yaml f
 
 **Build queue is cluster-aware on multi-node remotes**: `max_concurrent` becomes per-host (each host gets its own slot pool), and queued deploys fan out across hosts instead of serializing through the manager. Override individual hosts with `build_queue.per_host_concurrency` (map of `hostname → slot count`; hostname is used — not swarm node ID — so config survives node rejoins). The queue tracks BuildKit cache affinity (last-built host per project) and per-host RAM reservations so parallel acquires don't pile onto a stale free-RAM snapshot. FIFO + priority ordering is preserved across hosts via a fairness gate (entries past total cluster capacity wait). Single-host remotes keep the legacy global pool — no behavior change.
 
-**Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments,per_host_concurrency}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
+**Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments,per_host_concurrency}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy,registry_export,registry_export_mode}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
+
+**Registry-backed build cache (default-on, multi-node)**: when a registry is configured, builds use a registry-stored BuildKit layer cache (`--cache-to`/`--cache-from type=registry,mode=max` on the `docker-container` builder) under a single `<image>:buildcache` tag, overwritten each build. It survives builder resets and is shared across nodes (a fresh/other node pulls warm cache instead of building cold), and the deps `RUN --mount=type=cache` now survives transient BuildKit session-error recovery (restart-before-recreate). Disk-bounded: tag overwritten per build (no per-version accumulation), stale layers reclaimed by daily registry garbage-collect, `:buildcache` preserved by retention. Disable/tune: `build_cache.registry_export` (bool, default true), `build_cache.registry_export_mode` (`max` default / `min`). The image cache (skip-build on unchanged source hash) is separate and unchanged.
 
 **Note:** `env copy` targets plain Docker service env vars; `secrets copy` targets the encrypted store. Same endpoint syntax and flags for both (see `secrets copy` section above). Use `env copy` for non-sensitive config, `secrets copy` for credentials.
 
@@ -1524,7 +1552,10 @@ healthcheck:
 
 # Update strategy
 update:
-  order: start-first                  # start-first, stop-first
+  order: start-first                  # start-first (default, zero-downtime), stop-first
+                                      # WARNING: stop-first + replicas:1 + no volumes = guaranteed 404
+                                      # window every deploy (deploy prints a warning). Keep start-first
+                                      # for stateless apps; stop-first is for single-volume stateful only.
   failure_action: rollback            # rollback, pause, continue
   parallelism: 2                      # Tasks updated at once (default: 1)
   delay: "10s"                        # Delay between updates (default: 5s)
