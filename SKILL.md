@@ -725,7 +725,7 @@ servel connect db                     # Quick connect to infra
 ```bash
 servel ssh <server>                   # SSH into server
 servel remote status                  # Cluster health (CPU, memory, disk)
-servel remote add <name> user@host    # Add server
+servel remote add <name> user@host    # Add server (worker IP / cluster DNS auto-redirects to a swarm manager)
 servel remote list                    # List servers
 servel remote use <name>              # Switch default server
 servel remote remove <name>           # Remove server
