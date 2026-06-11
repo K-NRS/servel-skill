@@ -335,7 +335,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 |---|---|
 | `upgrade` | Upgrade local servel binary. Twin-serving by default (stage→smoke→swap→sentinel probation→auto-revert); `--no-twin` for direct swap. |
 | `selfcheck` | Offline binary smoke (config parse + state-dir + docker ping). No network. Used by the upgrade flow against the staged candidate. |
-| `upgrade-servers` | Bump all configured servers to match client version (`--rolling` for multi-node). |
+| `upgrade-servers` | Bump all configured servers to match client version. **Rolling by default** (one node at a time, health-gated, auto-revert); `--no-rolling` opts out. `--rolling` deprecated (no-op). Gate = binary answers `version --json` AND daemon heartbeat fresh on the NEW build id (daemonless servers fall back to binary-only). On gate failure: remote auto-revert (`sudo servel upgrade --rollback` + daemon restart over SSH), budgeted 3/24h per `server:<name>`; if the server-local sentinel already reverted (old build fresh) it's classified `reverted (server-local sentinel)` with NO second rollback. First failure aborts the rest (breaker). |
 | `check-versions` | Audit server versions for compatibility. |
 | `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. |
 | `ai [question]` | Throwaway AI assistant session with full server context. Auto-detects agent (Claude Code → Codex → opencode); `--agent claude\|codex\|opencode`, `--remote <server>`, `--config <path>` (default `~/.servel/ai.yaml`). One-shot: `servel ai "why is myapp down?"`; interactive: bare `servel ai`. Spawns the agent wired to servel's MCP server over SSH (destructive tools enabled, gated by the agent's confirm prompt). |
@@ -859,13 +859,16 @@ servel upgrade --pin v0.4.2           # auto-apply ceiling
 servel upgrade --set-mode apply       # opt in to auto-apply (default: notify)
 servel upgrade --servers              # also roll the configured remotes
 
-servel upgrade-servers --rolling      # production fleet upgrade — one node at a time, health-gated
+servel upgrade-servers                # fleet upgrade — rolling + health-gated + auto-revert BY DEFAULT
+servel upgrade-servers --no-rolling   # opt out: upgrade all at once, no health gate
 servel upgrade-servers --server KN    # upgrade one specific remote
 
 servel selfcheck                      # offline binary smoke (config + state-dir + docker ping); no network
 ```
 
 **Twin-serving upgrades (default).** The new binary is never trusted until it proves health: download → stage as `<binary>.next` → verify checksum+signature → pre-swap smoke (`<next> version --json` + `<next> selfcheck`) → atomic swap → **post-swap probation**. A bad binary bricks both SSH JSON-RPC and the daemon, so after the swap a **sentinel** (launched from the *previous* binary, never the unproven one) watches the daemon heartbeat at `/var/servel/daemon/health.json` for 3 fresh ticks carrying the new build id within 120s. Fail → auto-revert to `.prev`, restart the daemon, critical audit + alert. Auto-revert is budgeted (3/24h/surface; exhausted → alert-only). Servers without the daemon degrade to pre-swap smoke only. `--no-twin` opts out.
+
+**Cross-server (second line of defense).** `servel upgrade-servers` is rolling-by-default and applies the SAME heartbeat verdict across SSH: after each server's `sudo servel upgrade --force` (which runs the server-local sentinel = first line of defense), the client gates on `version --json` + a fresh `/var/servel/daemon/health.json` carrying the new build id. On failure it auto-reverts remotely (`sudo servel upgrade --rollback` + daemon restart), budgeted per `server:<name>` — UNLESS the server-local sentinel already reverted (old build fresh → no double rollback). First failure aborts the rest.
 
 Daemon-side: every `servel remote status` reads `/var/servel/cache/update.json` (written by the daemon's once-per-24h check) and surfaces "new servel release available" inline. Auto-apply on the daemon is **never** done — operators run `servel remote upgrade` (or `servel upgrade-servers`) to roll the fleet.
 
