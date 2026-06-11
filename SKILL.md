@@ -164,6 +164,8 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `infra start / stop / restart / remove / rename / update / upgrade / rotate` | Lifecycle. |
 | `infra run <name> <action>` / `infra run-hooks` | Lifecycle hooks declared in template. |
 | `infra version <name>` | Stack version. |
+| `infra cert status [@name] [--json]` | Read-only: cert expiry for self-TLS infra (poste.io-class — terminates own TLS behind Traefik passthrough). |
+| `infra cert renew @<name> [--force] [--staging] [--dns-wait <dur>]` | Issue/renew a publicly-trusted Let's Encrypt cert via **DNS-01** (Cloudflare token) and install it in-container (`/data/ssl/server.{crt,key}` for poste). The only ACME path that works behind `traefik-tcp-passthrough` (HTTP-01 is blocked by Traefik's `acme-http@internal` + :80 host-publish collision). Daemon auto-renews <14d-to-expiry (budget+breaker bounded). Needs `servel cf token set`. |
 | `link <infra>` / `unlink <infra>` | Wire infra → app (auto-injects env vars, internal DNS since 2026-05-09). |
 | `templates` / `hub` | Manage templates, browse Hub registry. |
 
@@ -188,7 +190,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Config / env / secrets
 | Command | What it does |
 |---|---|
-| `config [set|get|list|wizard|validate]` | Reflection-based config edit (client `~/.servel/config.yaml` or server `/var/servel/config.yaml`). |
+| `config [set|get|list|wizard|validate]` | Reflection-based config edit (client `~/.servel/config.yaml` or server `/var/servel/config.yaml`). Incl. `user.name`/`user.email` operator identity (`git config user.*` parallel; gates destructive commands — see Configuration knobs). |
 | `env [list|set|copy]` | Plaintext env vars. No rebuild for `set`. |
 | `set-env-file` | Wire `env_file` into `servel.yaml`. |
 | `secrets [list|get|set|delete|rotate|rotate-all|pull|import|export|copy|reconcile|scan|migrate]` | Age-encrypted secrets. `scan` finds hardcoded secrets in code. |
@@ -234,9 +236,9 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
 | `servers [check]` | Multi-server dashboard. |
 | `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** |
-| `capacity` / `cap` / `forecast` | Capacity forecast + node recommendations. |
+| `capacity` / `cap` / `forecast` | Capacity forecast + per-node health verdicts + node recommendations. Prints a cluster headline (`cluster healthy` / `cluster busy but within capacity` / `N node(s) strained` / `N node(s) need attention`) immediately after the title. Per-node reason lines follow the Current Capacity table for any non-healthy node. LOAD column is always dim — high loadavg alone never makes a node strained or critical. |
 | `units` | Unit-based capacity overview. |
-| `rebalance` | Auto-redistribute services (memory / tasks strategies). |
+| `rebalance` | Auto-redistribute services (memory / tasks strategies; planner simulates live CPU as well as memory). |
 | `reconcile` | Discover unlabeled services + missing state. |
 | `migrate` | Migrate `/var/servel/` filesystem layout to latest version. |
 | `prune` | Clean up Docker build artifacts. |
@@ -249,14 +251,53 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `access [user|role|scope|permissions|setup|invite|join|leave|token|request|audit|request-hint]` | Multi-user team access + ACL. |
 | `ban <ip|name>` / `unban` / `ban [ls|clear|sync]` | Server-wide and per-deployment IP bans (Traefik denyip plugin). |
 | `bastion [init|install|uninstall|start|stop|restart|status|sessions|kick|session [list|play|info|commands]]` | SSH bastion with session recording. |
-| `audit [list|stats|export|rotate]` | Audit log (forensics-grade who/what/when). |
+| `audit [list|stats|export|rotate]` | Audit log (forensics-grade who/what/when). Carries `user` (authenticated principal) + `operator`/`operator_email` (self-declared identity from `config set user.*`); destructive commands require the latter. |
 
 ### CI / CD / jobs / deps
 | Command | What it does |
 |---|---|
 | `ci [init|setup|pipelines|pipeline-init|run|retry|cancel|status|logs|recent|artifacts|webhook|keys|server|list]` | CI/CD pipelines (GitHub Actions / GitLab CI / built-in). |
-| `job [add|ls|rm|pause|resume|run|history|logs]` | Cron-style scheduled jobs. |
+| `job [add|ls|rm|pause|resume|run|history|logs\|doctor]` | Cron-style scheduled jobs. App-linked jobs display as `app/name` (e.g. `agentkarma/rescore`); pass `app/name` OR the bare name (bare resolves when unique across apps, else qualify it) to `run`/`rm`/`logs`/`history`/`pause`/`resume`. App-linked jobs pull the app image with registry auth (run on any node) + track redeploys. `job history` shows a REASON column for failures (the only place a pre-container failure cause appears). `job doctor` = end-to-end self-test. |
 | `deps [app]` | Show app dependencies + status. |
+
+#### `servel job` — detail
+
+```bash
+# Add a job linked to an app (inherits image + env)
+servel job add cleanup --schedule "0 3 * * *" --command "npm run cleanup" --app myapp
+
+# Add a standalone job with an explicit image
+servel job add sync --schedule "*/30 * * * *" --command "python sync.py" --image python:3.12
+
+# Add-time flags: --timeout 2h, --skip-running (default true), --timezone Europe/Istanbul,
+#   --retries 3, --retry-delay 5m, --constraint "node.hostname==worker-2", --env KEY=VALUE,
+#   --dry-run (preview systemd units without creating)
+
+# At least one of --app or --image is required; --app rejected if app has no runnable image
+
+# List jobs — app-linked jobs show as "app/name"
+servel job ls
+servel job ls --app myapp
+
+# Trigger, inspect, manage (pass app/name form for linked jobs)
+servel job run agentkarma/rescore
+servel job logs agentkarma/rescore [--tail 50]
+servel job history agentkarma/rescore [--limit 10]
+servel job pause agentkarma/rescore
+servel job resume agentkarma/rescore
+servel job rm agentkarma/rescore
+
+# Self-test the full subsystem end-to-end
+servel job doctor          # exit 0 = healthy, non-zero = a check failed (failing layer named in output)
+servel job doctor --keep   # leave probe on failure for debugging
+```
+
+**Key behaviors:**
+- Jobs run as one-shot Docker Swarm service tasks fired by systemd timers.
+- App-linked jobs resolve their image from the app's live Swarm service at exec time — cross-node safe even if the registering node has no local deployment record.
+- Fail-loud: unresolvable image or non-zero exit records FAILED in `job ls` STATUS and `job history`; no silent no-ops.
+- Weekday ranges (`1-5`) and lists (`1,3,5`) in cron work correctly.
+- `job exec` (hidden, systemd-internal) now dispatches to the server when called from a client — no more misleading "job not found".
 
 ### Monitoring / analytics / alerts
 | Command | What it does |
@@ -292,7 +333,8 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 ### Self-management
 | Command | What it does |
 |---|---|
-| `upgrade` | Upgrade local servel binary. |
+| `upgrade` | Upgrade local servel binary. Twin-serving by default (stage→smoke→swap→sentinel probation→auto-revert); `--no-twin` for direct swap. |
+| `selfcheck` | Offline binary smoke (config parse + state-dir + docker ping). No network. Used by the upgrade flow against the staged candidate. |
 | `upgrade-servers` | Bump all configured servers to match client version (`--rolling` for multi-node). |
 | `check-versions` | Audit server versions for compatibility. |
 | `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. |
@@ -480,6 +522,8 @@ Commands with a typed `--json` envelope (prefer these when parsing):
 - `remote status --json` → full `ServerMetrics` (server_info, resources.cpu/memory/disk, services, network, …)
 - `logs --json` → `{lines:[...]}` bounded, or NDJSON (`{app,line}` per line) with `--follow`
 
+`add` over SSH self-corrects a lost exit-status: a long remote deploy (e.g. supabase, 13 services) can finish successfully yet end the SSH session without an exit-status. `servel add` detects this specific case, re-queries `infra status <name>`, and exits **0** with the verified envelope (`status: running` or `degraded`) instead of a spurious non-zero — so a deployed-but-degraded stack is distinguishable from a hard failure by `status`, not just exit code. A genuinely failed create indexes nothing, so the re-query finds nothing and the non-zero exit is preserved.
+
 The MCP tools already return JSON internally and carry annotations (read-only / destructive hints) so MCP hosts can gate destructive calls in their own UI.
 
 ## Quick Reference
@@ -505,7 +549,7 @@ servel deploy --verbose --save                  # Persist flags to servel.yaml
 servel deploy --exclude target --exclude web/.next  # Extra excludes (merged with built-ins + .servelignore)
 servel deploy --memory 1g --cpu 0.5   # Resource limits
 servel deploy --quiet                 # Minimal output (only final result)
-servel ps                             # List deployments
+servel ps                             # List deployments (footer teaser flags underused services: idle + over-replicated → run `servel cap` for the scale-down/rm breakdown)
 servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
 servel logs <name> -f                 # Follow logs
@@ -554,7 +598,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--domain, -d` -- Domain for routing
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
-- `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way. Attachment is **reconciled on every deploy** (additive — operator-added networks survive), so adding a new link to an existing app and re-running `servel deploy` is enough; pre-fix, late-added links were silently dropped on the update path and showed up as `ENOTFOUND kong` / `ENOTFOUND <service>` at runtime.
+- `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way. Attachment is **reconciled on every deploy** (additive — operator-added networks survive), so adding a new link to an existing app and re-running `servel deploy` is enough; pre-fix, late-added links were silently dropped on the update path and showed up as `ENOTFOUND kong` / `ENOTFOUND <service>` at runtime. Connection env (DATABASE_URL etc.) is injected server-side via a trusted out-of-band channel (not process-env, so it bypasses the public-prefix env allowlist and never appears in `ps`), and link resolution is now **deterministic regardless of which manager smart-selection picks** — it falls back to a swarm-global lookup when the infra's node-local meta isn't on the SSH'd manager (previously failed `access:internal but not on deploy target swarm`).
   - **Connection env is auto-injected — no `servel env set`/`secrets set` needed.** `--link-infra <name>` (or the `infra:` block in servel.yaml) ships the resolved connection vars (`DATABASE_URL`, `<PREFIX>_HOST/PORT/USER/PASSWORD/DB`, `REDIS_URL`, `SUPABASE_*`, etc.) straight into the running container. They are delivered over a private in-band channel (a 0600 temp file, like migrated secrets), so DB passwords never appear in `ps`/argv, and they reach the container regardless of variable name (trusted server-resolved values bypass the public-prefix build-arg allowlist that gates raw shell env). Legacy bare-named infra (`servel-infra-{name}` with no `-{type}` suffix, deployed before the canonical convention) are discovered automatically and resolve to the correct host. Fixed 2026-05-29 (prior bug: network attached but `DATABASE_URL` was dropped by the allowlist → app reached 1/1 then crashed on stale env).
 - **Secret-store reconciliation** — `servel deploy` is additive: it writes declared secrets but never removes orphans. Stale values silently shadow infra-injected values via the `if !exists` rule. Two ways to fix drift:
   - `servel secrets reconcile <app>` — interactive cleanup (`--dry-run` to preview, `--yes` to skip prompts).
@@ -570,6 +614,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--env` -- Target environment
 - `--build-on <node>` -- Build on specific node
 - `--local-build` -- Build locally, push to registry
+- `--force-low-ram` -- Proceed with a remote build even when no build node has the framework's recommended RAM. By default servel now FAST-FAILS before a doomed under-RAM build (e.g. Next.js 16 + Turbopack needs ~4GB) and tells you to use `--local-build`; pass this to override and try anyway.
 - `--new` -- Force new deployment with unique subdomain
 - `--converge-timeout <duration>` -- Convergence wait time (default: 5m)
 - `--force-server` -- Suppress server mismatch warnings
@@ -659,9 +704,10 @@ servel infra update db --memory 2g    # Update config (memory, cpu, domain, node
                                       #   wouldn't fit. Diff-aware skip means per-service env changes don't
                                       #   roll the whole stack anymore.
 servel infra customize db --service db --memory 4GB
+servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
                                       #   Override persisted in spec; survives recreate.
-servel infra upgrade db --image postgres:16  # Safely upgrade image (auto-backup + health check)
+servel infra upgrade db --image postgres:16  # Safely upgrade: auto-backup → persist pre-upgrade image set → apply → health-gate (convergence + template readiness) → AUTO-ROLLBACK to prior image set + alert on gate failure (single-service AND stack paths). --skip-health bypasses gate AND rollback (operator intent). Stateful stays stop-first.
 servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upgrade specific service
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
@@ -733,8 +779,8 @@ servel remote provision               # Automated setup
 servel remote provision --repair      # Repair corrupted keys/services
 servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
-servel capacity                       # Capacity forecast + recommendations + Reservation Health + Stateful Concentration (advisory sections from autonomous remediation)
-servel capacity --json                # JSON output (.rightsize, .stateful_moves expose Tier 1 advisor data)
+servel capacity                       # Capacity forecast + per-node health verdicts + recommendations + Reservation Health + Stateful Concentration + Underused Services. Cluster headline immediately under title (healthy/busy/strained/critical). Per-node reason lines for non-healthy nodes. LOAD column dim — never alarm-colored.
+servel capacity --json                # JSON output (.cluster_status, .cluster_status_reason, per-node .verdict{level,reason} + .steal_pct + .system_pct, .rightsize, .stateful_moves, .underuse)
 servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
@@ -784,7 +830,7 @@ servel node specs <name>              # Node specifications
 servel node drain <name>              # Drain for maintenance
 servel node drain <name> --remove     # Drain then remove from cluster
 servel node activate <name>           # Reactivate drained node
-servel node balance --dry-run         # Preview rebalance plan (CLI default strategy: memory; daemon default: auto with memory→tasks fallthrough)
+servel node balance --dry-run         # Preview rebalance plan (CLI default strategy: memory; daemon default: auto with memory→tasks fallthrough). Planner is CPU-aware: simulates live CPU burn per move and prefers groups that relieve the source node's bottleneck (memory OR CPU).
 servel node balance --strategy auto   # Memory planner first, fallthrough to tasks if 0 migrations + task spread > delta
 servel node balance --strategy tasks --task-delta 5  # Equalize stateless task count per node
 servel node balance                   # Execute cluster rebalance
@@ -805,8 +851,9 @@ servel node label <hostname> key=val  # Add/remove node labels
 Signed self-upgrade for the CLI, daemon, and configured remotes. Notify-only by default; opt in to auto-apply per machine. See [AUTO_UPDATE.md](references/AUTO_UPDATE.md) for the full pipeline (sha256 + ed25519 verification, key rotation, daemon notifier, rolling fleet upgrades).
 
 ```bash
-servel upgrade                        # self-upgrade CLI (verifies signature before swap)
+servel upgrade                        # self-upgrade CLI (verify → stage .next → smoke → swap → probation)
 servel upgrade --check                # check only, no install
+servel upgrade --no-twin              # skip twin-serving probation; direct verified swap (escape hatch)
 servel upgrade --rollback             # restore previously-installed binary
 servel upgrade --pin v0.4.2           # auto-apply ceiling
 servel upgrade --set-mode apply       # opt in to auto-apply (default: notify)
@@ -814,7 +861,11 @@ servel upgrade --servers              # also roll the configured remotes
 
 servel upgrade-servers --rolling      # production fleet upgrade — one node at a time, health-gated
 servel upgrade-servers --server KN    # upgrade one specific remote
+
+servel selfcheck                      # offline binary smoke (config + state-dir + docker ping); no network
 ```
+
+**Twin-serving upgrades (default).** The new binary is never trusted until it proves health: download → stage as `<binary>.next` → verify checksum+signature → pre-swap smoke (`<next> version --json` + `<next> selfcheck`) → atomic swap → **post-swap probation**. A bad binary bricks both SSH JSON-RPC and the daemon, so after the swap a **sentinel** (launched from the *previous* binary, never the unproven one) watches the daemon heartbeat at `/var/servel/daemon/health.json` for 3 fresh ticks carrying the new build id within 120s. Fail → auto-revert to `.prev`, restart the daemon, critical audit + alert. Auto-revert is budgeted (3/24h/surface; exhausted → alert-only). Servers without the daemon degrade to pre-swap smoke only. `--no-twin` opts out.
 
 Daemon-side: every `servel remote status` reads `/var/servel/cache/update.json` (written by the daemon's once-per-24h check) and surfaces "new servel release available" inline. Auto-apply on the daemon is **never** done — operators run `servel remote upgrade` (or `servel upgrade-servers`) to roll the fleet.
 
@@ -1053,6 +1104,22 @@ servel config validate ./draft.yaml --server                  # dry-run a yaml f
 
 **Allocating an unset section is safe**: setting one leaf inside a previously-nil section (build_queue, log_retention, build_cache, registry_retention, access, auto_update, telemetry) populates siblings from canonical defaults — never zero-initializes them. So `servel config set build_queue.max_concurrent 2` on a fresh server writes `{enabled: true, max_concurrent: 2, queue_timeout: 10m}`, not `{max_concurrent: 2}` with `enabled: false`.
 
+**Operator identity (`user.name` / `user.email`) — the `git config user.*` parallel (added 2026-05-31).** Servel stamps a self-declared operator onto every audit entry so the log answers "which human ran this" on single-tenant boxes where everyone SSHes in as `root`:
+
+```bash
+servel config set user.name  "Kerem Noras"      # client config (~/.servel/config.yaml `user:` block)
+servel config set user.email "kerem@noras.tech"
+servel config get user.email
+```
+
+It is **attribution, not authentication**: the access gate's authenticated principal stays authoritative in the audit `user` field; operator rides alongside in `operator`/`operator_email`. **Destructive commands are GATED on it** — `remove`, `rollback`, `secrets {set,delete,rotate,rotate-all,import,migrate}`, `node {remove,forget,drain}`, `infra {remove,restore,rotate}` (deletes/overwrites DB/queue data), and `access` mutations (`user {create,delete,disable,enable,modify,rename}`, `scope {set,add,remove}`, `role create`, `request {approve,deny,revoke,extend,modify}`) refuse to run until an operator **email** is set (read-only commands and `--dry-run` are never gated; server-side re-execs are exempt — the gate is client-side). For automation/CI, satisfy the gate WITHOUT storing config by exporting the identity — agents running destructive commands non-interactively MUST set these or the command errors:
+
+```bash
+SERVEL_OPERATOR_NAME="ci-bot" SERVEL_OPERATOR_EMAIL="ci@example.com" servel rollback myapp --yes
+```
+
+The identity auto-propagates to ALL server-side audit writes (`deploy`, `rollback`, every `access`/`infra`/etc. command routed over SSH, and MCP tools) via `SERVEL_OPERATOR_NAME`/`SERVEL_OPERATOR_EMAIL` injected into the remote command string. `servel audit list` shows operator in place of the bare login; `--details` prints both; `--json` / `servel --json audit list` and CSV export include `operator`/`operator_email`.
+
 **Build queue is cluster-aware on multi-node remotes**: `max_concurrent` becomes per-host (each host gets its own slot pool), and queued deploys fan out across hosts instead of serializing through the manager. Override individual hosts with `build_queue.per_host_concurrency` (map of `hostname → slot count`; hostname is used — not swarm node ID — so config survives node rejoins). The queue tracks BuildKit cache affinity (last-built host per project) and per-host RAM reservations so parallel acquires don't pile onto a stale free-RAM snapshot. FIFO + priority ordering is preserved across hosts via a fairness gate (entries past total cluster capacity wait). Single-host remotes keep the legacy global pool — no behavior change.
 
 **Common server keys**: `build_queue.{enabled,max_concurrent,queue_timeout,priority_deployments,per_host_concurrency}`, `log_retention.{max_age_days,max_size_mb,compress,schedule}`, `build_cache.{max_size_gb,max_age_days,prune_on_deploy,registry_export,registry_export_mode}`, `registry_retention.{keep_per_repo,older_than,always_keep}`, `deployment_retention`, `port_range_start`, `port_range_end`, `access.{enabled,audit_retention_days}`. Run `servel config list --server --defaults` for the full inventory on any remote.
@@ -1072,6 +1139,10 @@ servel alerts add slack               # Add Slack channel
 servel alerts add discord             # Add Discord channel
 servel alerts add webhook             # Add webhook
 servel alerts test                    # Test notifications
+# Outside-in probes (daemon, default-on): every routed public domain HEAD-probed via real DNS/CDN every 5min; any HTTP status = reachable, transport failures + expired certs = down; 3 strikes → domain_unreachable alert (domain→service→node). Skip: `docker service update --label-add servel.probe.skip=true <svc>`; disable: `servel daemon config set domain_probes_enabled=false`. Catches the inside-checks-green-but-world-sees-down class.
+# Backups default-on (daemon): stateful infra auto-enrolled into daily restic schedules (opt-out: infra backup.auto_enroll:false / backup_auto_enroll_enabled=false); restic auto-installed when missing; weekly restic check + monthly restore-to-scratch drill — backup_verify_failed alert = your safety net is broken, act.
+# Containment (daemon, default-on): crash-loop quarantine — service storming >=2 consecutive windows is scaled to 0 (budget 3/24h cluster-wide, 1/stack; stack root-folding quarantines only the -db root; >5 unrelated storms = node-level breaker, alert only; release: servel scale <name> 1 / servel infra repair <infra>). Infra dup-generation reconciler force-converges services running MORE tasks than desired (sustained 2 checks, budget 5/24h).
+# Noise control (daemon-side, /var/servel/alerts.yaml): suppress_cooldown 30m per repeated alert (persisted across restarts), digest_threshold 5 + digest_window 60s collapse bursts into ONE summary message, telegram bell rings ONLY for critical severity.
 servel alerts status                  # Show alert status
 servel alerts history                 # View alert history
 servel alerts pause 2h                # Maintenance mode (pause alerts)
@@ -1533,6 +1604,7 @@ build:
 resources:
   memory: 512M
   cpus: 0.5
+  auto_reserve: true                  # default on: measured-baseline Swarm reservations at deploy (scheduling hint, never throttles); false to opt out
 replicas: 2
 node: manager-1                       # Pin to specific node hostname
 
@@ -1872,6 +1944,8 @@ environments:
 | CF↔origin leg unencrypted | Run `servel verify cf-ssl <project>` — Flexible mode = plaintext between CF and origin. Switch CF SSL/TLS to Full (strict). |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
 | Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Multi-domain deploys probe **every** HTTP route — a single failing route triggers respawn. Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
+| `superseded` status in `servel ps` / multiple generations of one app | **Normal, not an error.** Each deploy is an immutable generation; Servel keeps the last `deployment_retention` (default **3**) and marks superseded (old) generations `superseded`. Exactly one generation per app is `running`. A leader-side daemon reconcile pass (`generation_reconcile_budget`, default 50) collapses historical duplicates. The live generation's dir is never GC'd, even after `rollback`. |
+| `metadata not found` / app unmanageable by name though service is healthy | A running service's `servel.deployment.id` label pointed at a pruned generation dir (dangling label). Name resolution **self-heals** to the current live generation on disk automatically — `logs/exec/redeploy <name>` work without manual repair. A redeploy (or the daemon reconcile) re-points the label persistently. |
 | Service returned 404 from `servel-errors` middleware on one of its domains after a successful deploy | Stale-Traefik-VIP class. **Layered healing as of 2026-05-19**: post-deploy probe and 5-min runtime watchdog now (a) **skip stopped services** — `0/0` replicas means intentionally paused, not broken (audit `routing.skip_stopped`); (b) check for **orphan** — if the swarm service vanished, mark `routing.orphan` and stop retrying (closes the 600+ noisy-loop class observed on navola); (c) force-update the **backend** first; (d) if backend respawn doesn't restore reachability, **escalate** by force-updating Traefik itself (`servel-system-traefik`). Watchdog escalation threshold: 6 consecutive failed probes; Traefik-repair cooldown: 1h per service. **Cluster-wide budget:** max 4 Traefik force-updates per rolling 24h window — once exhausted, escalation is refused (audit `routing.traefik_repair_budget_exceeded`) and only backend repairs run. Founding incident 2026-05-19: a single 0/0 deployment caused hourly Traefik rolls that wiped acme.json each time and tripped LE 5/week per-domain rate limits cluster-wide. Skip-stopped + budget cap close that class together. To force immediately: `servel restart <name>`. To disable watchdog: `servel config set routing_health_enabled=false --server`. To disable auto-repair (keep alerts): `servel config set routing_auto_repair=false --server`. Audit log: `routing.probe`, `routing.repair`, `routing.traefik_repair`, `routing.orphan`, `routing.skip_stopped`, `routing.traefik_repair_budget_exceeded`. Alert conditions: `deployment_routing_unreachable`, `deployment_routing_repaired`. **Provider hardening:** Traefik static config now sets `exposedByDefault: false` + provider constraint `Label(\`servel.managed\`,\`true\`)`. Existing servers need `servel doctor --remote <name> --fix` to migrate retroactively (`Traefik Config` + `Managed Labels` checks). |
 | Volume orphaned | `servel volumes --orphaned` to find, `servel volumes inspect <name>` for details |
 | `name must be valid as a DNS name component` / `not a valid DNS label` | Name has dots/uppercase/underscores. Use DNS-safe name (`my-app-prod`) and pass domain via `--domain`, not `--name`. |
