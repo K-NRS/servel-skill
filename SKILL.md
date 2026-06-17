@@ -155,7 +155,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 |---|---|
 | `add <type> [name]` | Add infra from hub template (46 types: postgres, redis, mongodb, supabase, chatwoot, openreplay, ...). Supports `--ha`, `--replicated`, `--prefix` bundles. |
 | `infra` (no args) | List all infra. |
-| `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services. |
+| `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services / **Postgres connection saturation** (≥90% of `max_connections` = critical, SQLSTATE 53300 — catches the "auth/DB connection error" class on Supabase/postgres stacks). |
 | `infra repair @<name>` | Auto-rsync bind sources, alert on drift. |
 | `infra backup / restore` | Per-infra backup. |
 | `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. |
@@ -594,7 +594,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 **Smart mode (default):** Detects what changed -> config-only (~8s), static-only (~10s), or full build.
 
 **Key flags:**
-- `--name, -n` -- Deployment name
+- `--name, -n` -- Deployment name. **Multi-service-from-one-repo: pass `--name <svc>` on EVERY deploy.** Deploy state is keyed per project dir, not per service; a repo that swaps `servel.yaml` to deploy several differently-named services (e.g. `cp deploy/<svc>.yaml servel.yaml; servel deploy`) shares one cached identity, and `--name` pins each service so they don't collide. Without `--name`, a `servel.yaml` `name:` that differs from the dir's last deployment is treated as a **separate deployment** (deploys under the yaml name, leaves the previous service running — it is NOT renamed/removed; that was the 2026-06-14 clobber, now non-destructive). Real renames: `servel rename <old> <new>`.
 - `--domain, -d` -- Domain for routing
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
@@ -834,6 +834,7 @@ servel node balance --dry-run         # Preview rebalance plan (CLI default stra
 servel node balance --strategy auto   # Memory planner first, fallthrough to tasks if 0 migrations + task spread > delta
 servel node balance --strategy tasks --task-delta 5  # Equalize stateless task count per node
 servel node balance                   # Execute cluster rebalance
+# Auto-rebalance (daemon) is intent-aware + flap-protected: data-bound deployments (persisted placement_state.data_node anchor) are NEVER candidates — moving them can't stick (home-node persistence refuses to follow), so they'd ping-pong every cycle. Anti-flap breaker: a group that migrated >=rebalance_flap_threshold (default 3) times within rebalance_flap_window (default 24h) is frozen from candidacy + alerted once ("group flapping — frozen from rebalance; investigate"). Tune: servel daemon config set rebalance_flap_threshold=4 (negative disables).
 servel node schedule <name> --at "2026-02-01 03:00"  # One-time drain
 servel node schedule <name> --in 2h   # Relative time drain
 servel node schedule <name> --cron "0 3 * * *"       # Recurring drain
@@ -1625,6 +1626,12 @@ healthcheck:
   interval: 30s
   timeout: 10s
   retries: 3
+# type: http auto-degrades to a TCP listen-check on images without curl/wget
+#   (Rust/scratch/distroless) — won't false-kill a listening-but-curl-less app.
+# type: none now AUTHORITATIVELY disables the healthcheck (Docker NONE sentinel)
+#   and CLEARS any prior one on redeploy — use it to truly turn health checking
+#   off (e.g. a curl-less image where you don't want even the TCP probe).
+# Omitting the block → default TCP probe on the service port (listening = healthy).
 
 # Update strategy
 update:
@@ -1946,7 +1953,7 @@ environments:
 | Cloudflare redirect loop | Set `cloudflare: true` in servel.yaml OR (preferred) switch CF SSL/TLS to Full (strict) and leave `cloudflare` unset |
 | CF↔origin leg unencrypted | Run `servel verify cf-ssl <project>` — Flexible mode = plaintext between CF and origin. Switch CF SSL/TLS to Full (strict). |
 | Stale/orphaned state | `servel reconcile --dry-run` to preview, then `servel reconcile` |
-| Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Multi-domain deploys probe **every** HTTP route — a single failing route triggers respawn. Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). |
+| Deploy ended with status `degraded` | Image is running but the public URL probe failed twice (once before and once after auto-respawn). Multi-domain deploys probe **every** HTTP route — a single failing route triggers respawn. Check `servel logs traefik` first, then `servel verify routing <name>`. To force another respawn cycle: `servel restart <name>`. To skip the probe on the next deploy: `--skip-probe`. To set a non-default probe path: `servel.yaml` `post_deploy.probe.path: /healthz` (or `--probe-path /healthz`). **The probe path now defaults to the declared `healthcheck.path` (http type) when set, else `/`** — so API-only services that 404 on `/` just need an HTTP `healthcheck:` block (no separate probe config). Services with NO healthcheck block (TCP fallback) that 404 on `/` still need an explicit `post_deploy.probe.path`. |
 | `superseded` status in `servel ps` / multiple generations of one app | **Normal, not an error.** Each deploy is an immutable generation; Servel keeps the last `deployment_retention` (default **3**) and marks superseded (old) generations `superseded`. Exactly one generation per app is `running`. A leader-side daemon reconcile pass (`generation_reconcile_budget`, default 50) collapses historical duplicates. The live generation's dir is never GC'd, even after `rollback`. |
 | `metadata not found` / app unmanageable by name though service is healthy | A running service's `servel.deployment.id` label pointed at a pruned generation dir (dangling label). Name resolution **self-heals** to the current live generation on disk automatically — `logs/exec/redeploy <name>` work without manual repair. A redeploy (or the daemon reconcile) re-points the label persistently. |
 | Service returned 404 from `servel-errors` middleware on one of its domains after a successful deploy | Stale-Traefik-VIP class. **Layered healing as of 2026-05-19**: post-deploy probe and 5-min runtime watchdog now (a) **skip stopped services** — `0/0` replicas means intentionally paused, not broken (audit `routing.skip_stopped`); (b) check for **orphan** — if the swarm service vanished, mark `routing.orphan` and stop retrying (closes the 600+ noisy-loop class observed on navola); (c) force-update the **backend** first; (d) if backend respawn doesn't restore reachability, **escalate** by force-updating Traefik itself (`servel-system-traefik`). Watchdog escalation threshold: 6 consecutive failed probes; Traefik-repair cooldown: 1h per service. **Cluster-wide budget:** max 4 Traefik force-updates per rolling 24h window — once exhausted, escalation is refused (audit `routing.traefik_repair_budget_exceeded`) and only backend repairs run. Founding incident 2026-05-19: a single 0/0 deployment caused hourly Traefik rolls that wiped acme.json each time and tripped LE 5/week per-domain rate limits cluster-wide. Skip-stopped + budget cap close that class together. To force immediately: `servel restart <name>`. To disable watchdog: `servel config set routing_health_enabled=false --server`. To disable auto-repair (keep alerts): `servel config set routing_auto_repair=false --server`. Audit log: `routing.probe`, `routing.repair`, `routing.traefik_repair`, `routing.orphan`, `routing.skip_stopped`, `routing.traefik_repair_budget_exceeded`. Alert conditions: `deployment_routing_unreachable`, `deployment_routing_repaired`. **Provider hardening:** Traefik static config now sets `exposedByDefault: false` + provider constraint `Label(\`servel.managed\`,\`true\`)`. Existing servers need `servel doctor --remote <name> --fix` to migrate retroactively (`Traefik Config` + `Managed Labels` checks). |
