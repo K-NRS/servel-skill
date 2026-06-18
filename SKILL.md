@@ -302,6 +302,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Monitoring / analytics / alerts
 | Command | What it does |
 |---|---|
+| `status [enable|disable|list]` | Public status page (gatus-backed). `enable` enumerates every public Traefik route (file-provider + label-routed deployments), renders a gatus config.yaml, deploys `servel add gatus <name>`, seeds the config as a Docker config object mounted at `/config/config.yaml` (node-independent across a multi-node swarm), and writes the Traefik route. `disable` removes infra + route files (scoped to the infra's own gatus backend) + config objects. `list` (alias for bare `servel status`) shows URL, auth on/off, monitored count, and live up/down from the gatus API. Flags: `--domain`, `--auth` (generate basic auth, printed once), `--node`, `--name` (default `status`), `--title`. On-cluster caveat: a full ingress outage takes the page down too — complement with external monitoring. |
 | `alerts [enable|disable|setup|add|remove|test|pause|resume|history|config|monitored|status]` | Telegram/Slack/Discord/webhook alerts with pressure detection. |
 | `analytics` | Visitor analytics from Traefik logs (`--cluster` for cluster view). |
 | `telemetry [status|enable|disable]` | Anonymous telemetry settings. |
@@ -1151,6 +1152,46 @@ servel alerts status                  # Show alert status
 servel alerts history                 # View alert history
 servel alerts pause 2h                # Maintenance mode (pause alerts)
 ```
+
+### Status Page
+
+```bash
+# Stand up a public status page at status.<primary-domain>
+servel status enable
+
+# Custom domain + auth (credentials printed once — record them)
+servel status enable --domain health.example.com --auth
+
+# Pin to a specific node + custom title
+servel status enable --node KN-MANAGER --title "My Cluster Status"
+
+# Use a non-default infra name
+servel status enable --name health
+
+# Show page URL, auth state, monitored count, live up/down
+servel status list
+servel status list --name health
+
+# Tear it down (prompts unless --yes)
+servel status disable
+servel status disable --yes
+
+# Bare command = list
+servel status
+```
+
+**How it works:**
+- `enable` enumerates every public Traefik route (file-provider + label-routed deployments) via the same inventory the daemon's outside-in prober watches, then renders a deterministic gatus config.yaml (endpoints sorted by group+name, names de-duplicated for gatus), dogfoods `servel add gatus <name>`, seeds the config.yaml into the gatus `/config` named volume, and writes the Traefik route if absent.
+- `disable` removes the gatus infra + all matching Traefik route files (`infra-<name>-*.yml`).
+- `list` reads the seeded config.yaml for monitored count + auth state; queries the gatus API (internal Swarm DNS) for live up/down (best-effort, silent on failure).
+- The status page is itself cluster-local — a full ingress outage takes it down too. Complement with an external monitor for the page's own URL.
+
+**Flags:**
+- `--domain <d>` — status-page domain (default: `status.<primary-domain>`)
+- `--auth` — generate bcrypt basic auth; credentials printed once, not stored in plaintext
+- `--node <hostname>` — pin gatus service to a node
+- `--name <n>` — infra name for the status page (default: `status`)
+- `--title <t>` — dashboard title (default: `Servel Status`)
 
 ### CI/CD
 
