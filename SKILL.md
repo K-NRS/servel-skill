@@ -807,7 +807,7 @@ servel move @postgres --to-remote navola --commit-source-cleanup    # Drop sourc
 servel dashboard                      # One-screen overview of every optional subsystem
 servel dashboard --remote KN          # Same, targeting a specific server
 servel dashboard --watch 5            # Refresh in place every 5 seconds (incident monitoring)
-servel df --growers                   # Top disk consumers (curated 16-path scan, sorted desc)
+servel df --growers                   # Top disk consumers (curated scan + "Reclaim space:" action block; shows progress while scanning)
 servel df --growers --top 20          # Show top 20 instead of default 10
 servel cleanup                        # Remove expired environments
 servel cleanup --force                # No confirmation
@@ -1147,7 +1147,7 @@ servel alerts test                    # Test notifications
 # Outside-in probes (daemon, default-on): every routed public domain HEAD-probed via real DNS/CDN every 5min; any HTTP status = reachable, transport failures + expired certs = down; 3 strikes → domain_unreachable alert (domain→service→node). Skip: `docker service update --label-add servel.probe.skip=true <svc>`; disable: `servel daemon config set domain_probes_enabled=false`. Catches the inside-checks-green-but-world-sees-down class.
 # Backups default-on (daemon): stateful infra auto-enrolled into daily restic schedules (opt-out: infra backup.auto_enroll:false / backup_auto_enroll_enabled=false); restic auto-installed when missing; weekly restic check + monthly restore-to-scratch drill — backup_verify_failed alert = your safety net is broken, act.
 # Containment (daemon, default-on): crash-loop quarantine — service storming >=2 consecutive windows is scaled to 0 (budget 3/24h cluster-wide, 1/stack; stack root-folding quarantines only the -db root; >5 unrelated storms = node-level breaker, alert only; release: servel scale <name> 1 / servel infra repair <infra>). Infra dup-generation reconciler force-converges services running MORE tasks than desired (sustained 2 checks, budget 5/24h).
-# Noise control (daemon-side, /var/servel/alerts.yaml): suppress_cooldown 30m per repeated alert (persisted across restarts), digest_threshold 5 + digest_window 60s collapse bursts into ONE summary message, telegram bell rings ONLY for critical severity.
+# Noise control (daemon-side, /var/servel/alerts.yaml): EDGE-TRIGGERED — each drift class (condition|service|server) is a FIRING/RESOLVED state machine; an alert fires ONCE on entry, is suppressed while unchanged (NO re-fire per cooldown), re-delivers only on severity/fingerprint change, recovers once on the resolving edge; state persisted (restart does not replay). Flap damping: N consecutive fails to alert + N consecutive clean cycles to recover, so oscillating probes emit no unreachable/repaired pairs. Critical heartbeat: still-FIRING criticals re-paged every reminder_interval (1h); warnings/operator-intent (e.g. parked scale-0) fire once + audit only, never nag. digest_threshold 5 + digest_window 60s collapse bursts into ONE summary; telegram bell rings ONLY for critical. suppress_cooldown now = RESOLVED-entry grace/reap window (not a re-fire interval).
 servel alerts status                  # Show alert status
 servel alerts history                 # View alert history
 servel alerts pause 2h                # Maintenance mode (pause alerts)
