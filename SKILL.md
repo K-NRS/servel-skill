@@ -199,6 +199,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | Command | What it does |
 |---|---|
 | `domains [list|add|remove|update|status|redirect|list-redirects|remove-redirect]` | Domain + SSL + redirect management. |
+| `domains claim [deployment]` | Claim (or retry) the **magic subdomain** for a deployment. Domainless deploys auto-claim `https://<app>-<hash6>.<magic-domain>` (hash6 = derived from the server's identity key); a failed claim NEVER fails the deploy — it prints `subdomain pending — retry: servel domains claim <name>` and the daemon retries in the background (budget 3/day per marker). This verb is the manual retry; idempotent for the owning server. Auto-detects the deployment from `.servel/state.json`; `--env` for env-scoped deployments. Requires a server binary with subdomain support (`servel upgrade-servers` if it errors with "unknown command"). |
 | `dns [verify|cleanup]` | DNS record verification + cleanup. |
 | `traefik [status|logs|restart|routes|certs|test|debug|pin|unpin|where]` | Traefik introspection + control. |
 | `routes [debug]` | Route-level debugging. |
@@ -510,6 +511,8 @@ When driving servel from an agent or script, a confirmation prompt with no TTY w
 
 Without `--yes`/consent in a non-interactive context, destructive commands (`rm`, `prune`, `upgrade`) abort rather than proceed — a closed stdin is never read as "yes". Pair `SERVEL_NONINTERACTIVE=1` with explicit `--yes` (or `--force`) on the commands you intend to run unattended.
 
+**Zero-prompt onboarding:** `servel remote add <name> root@<ip> --yes` pairs AND provisions a fresh server with no prompts at all — the Let's Encrypt email and primary domain are optional (`--email`/`--domain` flags on `remote add`, or set later via `servel server provision --email/--domain`; SSL works without an email). The install one-liner forwards it: `curl -fsSL https://servel.dev/install.sh | sh -s -- --remote root@<ip> --yes` (the script itself also accepts `-y`).
+
 ## Machine-Readable Output (`--json`)
 
 `--json` is a **global flag** (bound on root, inherited by all commands). When set, the command emits a single structured JSON object/array on **stdout** and routes all human output (progress, spinners, banners) to **stderr** — so an agent can parse stdout deterministically. Color is auto-disabled. Errors still emit a JSON object with a populated `error` field AND a non-zero exit code (read both).
@@ -550,6 +553,12 @@ servel deploy --verbose --save                  # Persist flags to servel.yaml
 servel deploy --exclude target --exclude web/.next  # Extra excludes (merged with built-ins + .servelignore)
 servel deploy --memory 1g --cpu 0.5   # Resource limits
 servel deploy --quiet                 # Minimal output (only final result)
+# No domain configured at all? The deploy still gets a live HTTPS URL: servel
+# auto-claims a magic subdomain (https://<app>-<hash6>.<magic-domain>) and wires
+# the route + SSL before service creation. Redeploys REUSE the same grant
+# (persisted in spec as magic_subdomain). Claim failure never fails the deploy —
+# it prints "subdomain pending — retry: servel domains claim <name>"; the daemon
+# retries in the background. Custom domain later via `servel domains add`.
 servel ps                             # List deployments (footer teaser flags underused services: idle + over-replicated → run `servel cap` for the scale-down/rm breakdown)
 servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
@@ -769,14 +778,20 @@ servel connect db                     # Quick connect to infra
 
 `servel server` is aliased to `servel remote`. Both work interchangeably.
 
+**SSH host keys are TOFU (trust-on-first-use, OpenSSH `accept-new`)**: the first connection pins the server's key in `known_hosts` and prints its fingerprint once; any later mismatch is a **hard failure** with MITM guidance — never a prompt, never silently re-pinned. Legit rebuild/re-key: `ssh-keygen -R <host>` (or `"[<host>]:<port>"` for non-22) then retry. `--accept-new-host-keys` on `remote provision` is now a deprecated no-op (TOFU is the default).
+
 ```bash
 servel ssh <server>                   # SSH into server
 servel remote status                  # Cluster health (CPU, memory, disk)
 servel remote add <name> user@host    # Add server (worker IP / cluster DNS auto-redirects to a swarm manager)
+servel remote add prod root@1.2.3.4 --yes   # Zero-prompt add + provision (CI/agents) — no email/domain gate
+servel remote add prod root@1.2.3.4 --email you@x.com --domain x.com  # Optional at add time: LE contact + primary domain
 servel remote list                    # List servers
 servel remote use <name>              # Switch default server
 servel remote remove <name>           # Remove server
-servel remote provision               # Automated setup
+servel remote provision               # Automated setup — never prompts; email/domain are OPTIONAL flags
+servel remote provision --email you@x.com  # Set LE contact any time (cert-expiry notices; SSL works WITHOUT it —
+                                      # empty email = contact-less ACME registration, valid per RFC 8555)
 servel remote provision --repair      # Repair corrupted keys/services
 servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
@@ -933,6 +948,8 @@ Default is **merge**; `--replace` for full replacement. Values never touch disk 
 
 ```bash
 servel domains add myapp app.com      # Add domain (auto-SSL)
+servel domains claim [myapp]          # Claim/retry the magic subdomain (domainless deploys auto-claim;
+                                      # this is the manual retry after "subdomain pending"). Idempotent.
 servel domains ls                     # List all domains
 servel domains rm myapp app.com       # Remove domain
 servel domains redirect old.com new.com # Create redirect
