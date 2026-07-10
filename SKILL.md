@@ -237,7 +237,7 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
 | `servers [check]` | Multi-server dashboard. |
 | `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** |
-| `capacity` / `cap` / `forecast` | Capacity forecast + per-node health verdicts + node recommendations. Prints a cluster headline (`cluster healthy` / `cluster busy but within capacity` / `N node(s) strained` / `N node(s) need attention`) immediately after the title. Per-node reason lines follow the Current Capacity table for any non-healthy node. LOAD column is always dim — high loadavg alone never makes a node strained or critical. Unit Capacity table columns: `RESERVED \| ALLOC \| ACTUAL \| MAX \| UTIL` + a one-line legend under the table. Reservation Health top-3 (both over- and under-reserved) rank by biggest offender in unit currency, not raw signed reclaim. |
+| `capacity` / `cap` / `forecast` | Capacity forecast + per-node health verdicts + node recommendations. Prints a cluster headline (`cluster healthy` / `cluster busy but within capacity` / `N node(s) strained` / `N node(s) need attention`) immediately after the title. Per-node reason lines follow the Current Capacity table for any non-healthy node. LOAD column is always dim — high loadavg alone never makes a node strained or critical. Unit Capacity table columns: `RESERVED \| ALLOC \| ACTUAL \| MAX \| UTIL` + a one-line legend under the table. Reservation Health top-3 (both over- and under-reserved) rank by biggest offender in unit currency, not raw signed reclaim. Entries display servel identities — `myapp` / `@infra (svc)` / `~system` — never raw docker service names (raw only when the infra can't be resolved), and each class carries a `fix:` hint (over-reserved → daemon auto-trim + `servel stop <app>` when unneeded; phantom load → auto-reserve on next `servel deploy`; over-limit → raise `resources.*` in servel.yaml). |
 | `units` | Unit-based capacity overview (declared limits + live estimates — the ALLOC currency). |
 | `rebalance` | Auto-redistribute services (memory / tasks strategies; planner simulates live CPU as well as memory). |
 | `reconcile` | Discover unlabeled services + missing state. |
@@ -582,8 +582,9 @@ servel restart <name>                 # Restart deployment
 servel stop <name>                    # Stop deployment (scales to 0)
 servel start <name>                   # Start stopped deployment
 servel stop @mydb                     # Stop infra (warns if deployments are linked to it)
-servel stop @mydb --with-linked       # Stop infra AND its linked deployments (apps first, then infra)
-servel start @mydb --with-linked      # Start infra first, then linked deployments (1 replica each; apps retry until infra ready)
+servel stop @mydb --with-linked       # Stop infra AND its linked deployments (apps first, then infra; records pre-stop replica counts)
+servel start @mydb --with-linked      # Start infra first, then linked deployments at their recorded pre-stop replica
+                                      # counts (falls back to 1 when no record; apps retry until infra ready)
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
 servel exec <name> -- cmd args        # Run command in container
@@ -743,7 +744,9 @@ servel infra restore db backup.sql.gz # Restore
 servel infra rotate db                # Rotate credentials
 servel infra restart db --force       # Force restart
 servel infra start db                 # Start
-servel infra stop db                  # Stop (scales to 0)
+servel infra start db --with-linked   # Start infra first, then linked deployments at recorded pre-stop replica counts (else 1)
+servel infra stop db                  # Stop (scales to 0; warns if deployments are linked)
+servel infra stop db --with-linked    # Stop linked deployments first, then the infra (records pre-stop replica counts)
 servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
 servel infra rm db                    # Remove
@@ -799,7 +802,7 @@ servel remote provision --repair      # Repair corrupted keys/services
 servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
 servel capacity                       # Capacity forecast + per-node health verdicts + recommendations + Reservation Health + Stateful Concentration + Underused Services. Cluster headline immediately under title (healthy/busy/strained/critical). Per-node reason lines for non-healthy nodes. LOAD column dim — never alarm-colored.
-servel capacity --json                # JSON output (.cluster_status, .cluster_status_reason, per-node .verdict{level,reason} + .steal_pct + .system_pct, .rightsize, .stateful_moves, .underuse); unit_summary carries reserved_units/reserved_pct (canonical) + deprecated used_units/used_pct aliases + alloc_units/alloc_pct (0 if the units fetch soft-failed)
+servel capacity --json                # JSON output (.cluster_status, .cluster_status_reason, per-node .verdict{level,reason} + .steal_pct + .system_pct, .rightsize, .stateful_moves, .underuse); unit_summary carries reserved_units/reserved_pct (canonical) + deprecated used_units/used_pct aliases + alloc_units/alloc_pct (0 if the units fetch soft-failed). .rightsize top entries carry an additive `display` field (servel identity: name / "@infra (svc)" / ~system) alongside the unchanged raw `Service` key
 # Unit vocabulary (cap table, units --json, post-deploy teaser all share it): RESERVED/reserved_units = scheduler view
 # (Docker reservations); ALLOC/alloc_units = declared limits + live estimates (same number the post-deploy "alloc @host"
 # line shows); ACTUAL/actual_units = observed usage. Gap between RESERVED and ACTUAL = phantom load. Deprecated
