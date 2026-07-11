@@ -148,7 +148,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
 | `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. |
 | `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
-| `connect <name>` | Print infra connection details (URL, user, password). |
+| `connect <name>` | Print infra connection details (URL, user, password). `--open` launches the web dashboard in the browser, logged in automatically for basic-auth dashboards (e.g. Supabase Studio). |
 
 ### Infrastructure (`servel infra ...` + `servel add`)
 | Subcommand | What it does |
@@ -771,6 +771,7 @@ servel link db                        # Link (from app's project dir) -> saved t
 servel unlink db                      # Unlink (persisted to servel.yaml)
 servel deps myapp                     # Show dependencies
 servel connect db                     # Quick connect to infra
+servel connect mysupabase --open      # Open dashboard in browser, auto-logged-in (basic-auth dashboards)
 ```
 
 **Database Migrations:** Use `servel infra sql` — this is the canonical way to run SQL migrations against any database infrastructure. Supports PostgreSQL, MySQL, MariaDB, CockroachDB, and Supabase. When given a directory, runs all `.sql` files in alphabetical order (prefix with `001_`, `002_`, etc.). For Supabase, uses `supabase_admin` superuser on the `-db` service. For ORM migrations (Prisma, Drizzle), use `servel infra run <name> migrate` if a custom action is defined, or run via `servel exec`.
@@ -810,7 +811,10 @@ servel capacity --json                # JSON output (.cluster_status, .cluster_s
 # Unit vocabulary (cap table + units --json): RESERVED/reserved_units = scheduler view (Docker reservations);
 # ALLOC/alloc_units = declared limits + live estimates; ACTUAL/actual_units = observed usage. Gap between RESERVED
 # and ACTUAL = phantom load. Deprecated used_units/used_pct are aliases — prefer reserved_units/reserved_pct on cap,
-# alloc_units/alloc_pct on units. Allocation is NEVER red anywhere (amber past 100%): >100% ALLOC = by-design Swarm
+# alloc_units/alloc_pct on units. `servel infra`/`servel units` footers contextualize allocation inline with
+# "· live ~Xu (Y%)" from the daemon snapshot (<=10min fresh; multi-node needs a daemon that stores per-node
+# HasLive/Live*Pct — older daemons fall back to the pointer-only footer). Allocation is NEVER red anywhere
+# (amber past 100%): >100% ALLOC = by-design Swarm
 # oversubscription, not live exhaustion — red is reserved for live usage signals. The post-deploy teaser shows LIVE
 # state only (capacity line + this deploy's dim "~+Nu" footprint); it has NO alloc line — allocation lives in cap/units.
 servel df                             # Disk usage
