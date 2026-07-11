@@ -158,7 +158,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services / **Postgres connection saturation** (≥90% of `max_connections` = critical, SQLSTATE 53300 — catches the "auth/DB connection error" class on Supabase/postgres stacks). |
 | `infra repair @<name>` | Auto-rsync bind sources, alert on drift. |
 | `infra backup / restore` | Per-infra backup. |
-| `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. |
+| `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. Directory input is tracked by default (`--no-track` to opt out); `--baseline` adopts tracking on a DB whose schema already exists. |
 | `infra logs @<name> [--service X]` | Multi-service infra logs. |
 | `infra inspect / status / vars / labels / domains / customize / archives` | Read views. |
 | `infra start / stop / restart / remove / rename / update / upgrade / rotate` | Lifecycle. |
@@ -621,6 +621,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - **Secret-store reconciliation** — `servel deploy` is additive: it writes declared secrets but never removes orphans. Stale values silently shadow infra-injected values via the `if !exists` rule. Two ways to fix drift:
   - `servel secrets reconcile <app>` — interactive cleanup (`--dry-run` to preview, `--yes` to skip prompts).
   - `prune_secrets: true` in servel.yaml — auto-reconcile on every `servel deploy`. Orphan = in encrypted store, not in `secrets:` block, not injected by an `infra:` link.
+- `--skip-migrations` -- Skip the `migrations:` schema gate for this deploy (see **Deploy-time migrations** below).
 - `--public` -- Force linked infra to use public-domain hostnames (overrides per-link `access:internal` in servel.yaml). Mutually exclusive with `--internal`.
 - `--internal` -- Force internal Docker DNS for every link; **errors** if any linked infra isn't on the deploy target swarm.
 - `--no-registry` -- Skip registry push
@@ -642,6 +643,27 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--scan-block <severity>` -- Block on severity (critical, high, medium, low)
 - `--include <pattern>` -- Override exclusions (e.g. `--include .next` for pre-built)
 - `--exclude <pattern>` -- Extra exclusion patterns (repeatable; merged with built-ins + `.servelignore`)
+
+### Deploy-time migrations (schema gate)
+
+A `migrations:` block in `servel.yaml` makes `servel deploy` run tracked SQL migrations against the linked database BEFORE the new image builds:
+
+```yaml
+migrations:
+  path: ./migrations   # required — relative dir of .sql files
+  infra: mydb           # optional — defaults to the sole linked DB-capable infra
+  service: db            # optional passthrough (e.g. Supabase `db` service)
+  database: myapp        # optional passthrough
+  preview: false          # default false — preview deploys skip migrations
+```
+
+- Uses the same tracking engine as `servel infra sql <dir>` — already-applied files skip, only new files run.
+- **Migration failure ABORTS the deploy** — no image build, no rollout, previous version keeps running.
+- **Preview deploys skip migrations by default** (branch/PR deploys must not mutate shared/prod DB); set `preview: true` to opt in.
+- Target resolution: explicit `infra:` wins; otherwise the sole linked DB-capable infra. Zero or 2+ candidates is a hard error naming them.
+- v1 is same-server only — a linked infra on another node/swarm errors with a `--skip-migrations` escape hatch (run manually via `servel infra sql` instead).
+- No `migrations:` block but a linked DB-capable infra + a conventional `migrations/`/`db/migrations/`/`supabase/migrations/` dir exists locally → prints ONE hint line suggesting the block. Never auto-runs without it.
+- Adopting on a project with an existing schema: `servel infra sql @mydb ./migrations --baseline` first, so deploy doesn't try to re-run migrations the DB already has.
 
 ### Package Selection (what gets shipped)
 
@@ -733,7 +755,7 @@ servel infra labels db --add key=val  # View/modify Docker labels
 servel infra run db                  # List available actions
 servel infra run db psql             # Run action (e.g. interactive shell)
 servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
-servel infra run mysupabase add-auth-provider --var Provider=google --var ClientID=123  # Enable OAuth; omit ClientSecret from --var to get a hidden prompt (sensitive vars are also encrypted at rest, never plaintext in spec.json)
+servel infra run mysupabase add-auth-provider --var Provider=google --var ClientID=123  # Enable OAuth; omit ClientSecret from --var to get a hidden prompt. Any var/env name containing password|secret|token|key|credential is auto-detected sensitive across ALL infra types — hidden prompt + encrypted at rest, no per-template annotation needed.
 servel infra run db schema --dry-run # Preview action
 servel infra run-hooks db             # Execute lifecycle hooks
 servel infra run-hooks db --init      # Run post-init hooks
@@ -760,14 +782,16 @@ servel infra check mydb               # Check specific infra
 servel infra check --all-nodes        # Cluster-wide resilience scan across every configured remote (skips swarm workers)
 servel infra repair @mydb             # Auto-rsync missing bind sources; coalesce duplicate node pins (`multiple_node_pins`); alert on spec/state drift (resilience layer)
 servel infra repair @mydb --dry-run   # Preview what the resilience layer would auto-repair
-servel infra sql @mydb schema.sql     # Run SQL file against database
-servel infra sql @mydb ./migrations   # Run all .sql files in directory (alphabetical order)
+servel infra sql @mydb schema.sql     # Run SQL file against database (raw; single files aren't tracked by default)
+servel infra sql @mydb ./migrations   # Run all .sql files in directory, alphabetical order, TRACKED BY DEFAULT (skips already-applied)
 servel infra sql @mydb "SELECT 1"     # Run inline SQL
 servel infra sql @mydb schema.sql --dry-run  # Preview without executing
 servel infra sql @supabase migration.sql --service db  # Supabase (targets db service)
-servel infra sql @mydb ./migrations --track      # Tracked migrations (skip applied)
-servel infra sql @mydb ./migrations --track --status  # Show migration status
-servel infra sql @mydb ./migrations --track --force   # Re-apply changed migrations
+servel infra sql @mydb ./migrations --no-track   # Directory raw re-run-all (opt out of default tracking)
+servel infra sql @mydb schema.sql --track        # Track a single file explicitly
+servel infra sql @mydb ./migrations --status     # Show migration status
+servel infra sql @mydb ./migrations --force      # Re-apply changed migrations
+servel infra sql @mydb ./migrations --baseline   # Adopt tracking on a DB whose schema already exists (records files without executing them)
 servel link db                        # Link (from app's project dir) -> saved to servel.yaml, injects DATABASE_URL on next deploy
 servel unlink db                      # Unlink (persisted to servel.yaml)
 servel deps myapp                     # Show dependencies
@@ -775,7 +799,9 @@ servel connect db                     # Quick connect to infra
 servel connect mysupabase --open      # Open dashboard in browser, auto-logged-in (basic-auth dashboards)
 ```
 
-**Database Migrations:** Use `servel infra sql` — this is the canonical way to run SQL migrations against any database infrastructure. Supports PostgreSQL, MySQL, MariaDB, CockroachDB, and Supabase. When given a directory, runs all `.sql` files in alphabetical order (prefix with `001_`, `002_`, etc.). For Supabase, uses `supabase_admin` superuser on the `-db` service. For ORM migrations (Prisma, Drizzle), use `servel infra run <name> migrate` if a custom action is defined, or run via `servel exec`.
+**Database Migrations:** Use `servel infra sql` — this is the canonical way to run SQL migrations against any database infrastructure. Supports PostgreSQL, MySQL, MariaDB, CockroachDB, and Supabase. When given a directory, runs all `.sql` files in alphabetical order (prefix with `001_`, `002_`, etc.) and **tracking is ON by default** — already-applied files are skipped, a changed already-applied file errors (use `--force` to re-apply intentionally). Pass `--no-track` for the old raw re-run-all behavior. Single files/inline SQL stay raw unless you pass `--track`. Adopting tracking on a database whose schema already exists: `servel infra sql @mydb ./migrations --baseline` records every file as applied WITHOUT executing it. For Supabase, uses `supabase_admin` superuser on the `-db` service. For ORM migrations (Prisma, Drizzle), use `servel infra run <name> migrate` if a custom action is defined, or run via `servel exec`.
+
+**Migrations on deploy (schema gate):** a `migrations:` block in `servel.yaml` makes `servel deploy` apply tracked migrations to the linked DB before the new image builds — failure aborts the deploy. See "Deploy-time migrations" below.
 
 **Linking injects:** DATABASE_URL, REDIS_URL, MONGODB_URI, etc. based on infrastructure type.
 
