@@ -729,6 +729,7 @@ servel infra labels db --add key=val  # View/modify Docker labels
 servel infra run db                  # List available actions
 servel infra run db psql             # Run action (e.g. interactive shell)
 servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
+servel infra run mysupabase add-auth-provider --var Provider=google --var ClientID=123  # Enable OAuth; omit ClientSecret from --var to get a hidden prompt (sensitive vars are also encrypted at rest, never plaintext in spec.json)
 servel infra run db schema --dry-run # Preview action
 servel infra run-hooks db             # Execute lifecycle hooks
 servel infra run-hooks db --init      # Run post-init hooks
@@ -803,13 +804,12 @@ servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
 servel capacity                       # Capacity forecast + per-node health verdicts + recommendations + Reservation Health + Stateful Concentration + Underused Services. Cluster headline immediately under title (healthy/busy/strained/critical). Per-node reason lines for non-healthy nodes. LOAD column dim — never alarm-colored.
 servel capacity --json                # JSON output (.cluster_status, .cluster_status_reason, per-node .verdict{level,reason} + .steal_pct + .system_pct, .rightsize, .stateful_moves, .underuse); unit_summary carries reserved_units/reserved_pct (canonical) + deprecated used_units/used_pct aliases + alloc_units/alloc_pct (0 if the units fetch soft-failed). .rightsize top entries carry an additive `display` field (servel identity: name / "@infra (svc)" / ~system) alongside the unchanged raw `Service` key
-# Unit vocabulary (cap table, units --json, post-deploy teaser all share it): RESERVED/reserved_units = scheduler view
-# (Docker reservations); ALLOC/alloc_units = declared limits + live estimates (same number the post-deploy "alloc @host"
-# line shows); ACTUAL/actual_units = observed usage. Gap between RESERVED and ACTUAL = phantom load. Deprecated
-# used_units/used_pct (units) and used_units/used_pct (cap, pre-unification) are aliases — prefer reserved_units/
-# reserved_pct on cap, alloc_units/alloc_pct on units. Post-deploy teaser's "alloc @host" line colors the DEPLOY
-# TARGET node only (>100% red); other-node figures always render dim/muted, never red — oversubscription on unrelated
-# nodes is by-design, not a per-deploy alarm.
+# Unit vocabulary (cap table + units --json): RESERVED/reserved_units = scheduler view (Docker reservations);
+# ALLOC/alloc_units = declared limits + live estimates; ACTUAL/actual_units = observed usage. Gap between RESERVED
+# and ACTUAL = phantom load. Deprecated used_units/used_pct are aliases — prefer reserved_units/reserved_pct on cap,
+# alloc_units/alloc_pct on units. Allocation is NEVER red anywhere (amber past 100%): >100% ALLOC = by-design Swarm
+# oversubscription, not live exhaustion — red is reserved for live usage signals. The post-deploy teaser shows LIVE
+# state only (capacity line + this deploy's dim "~+Nu" footprint); it has NO alloc line — allocation lives in cap/units.
 servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
