@@ -107,7 +107,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 |---|---|
 | `deploy` | Build + push + create/update service + post-deploy probe + auto-heal. Compose / Dockerfile / preset / nixpacks auto-detected. |
 | `redeploy` | Re-apply stored spec without source code (good for env-only changes; respects `servel.yaml` edits since 2026-05-15 — use `--no-refresh` to disable). |
-| `rollback` | Roll to previous image; same convergence + probe contract as deploy. |
+| `rollback` | Roll to previous image; same convergence + probe contract as deploy. **Bare `rollback` = `live_version − 1`, where "live" is the running generation, NOT the newest record.** A killed/failed deploy leaves a higher-versioned dead record that a bare rollback skips past — servel warns when one exists. To restore a known-good version after a failed deploy, pass it explicitly (`servel rollback <app> <version>`) rather than bare rollback. |
 | `restart` | Force-update service (same as `docker service update --force`, but tracked). |
 | `scale <name> <N>` | Replicas → N. `0` = stop, ≥1 = start. Works with deployment / `@infra` / `~system`. |
 | `stop <name>` / `start <name>` | Aliases for `scale 0` / `scale 1`. |
