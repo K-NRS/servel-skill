@@ -319,7 +319,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Dev mode / local
 | Command | What it does |
 |---|---|
-| `dev [start|stop|list|logs|prune]` | Remote dev sandbox (bidirectional sync; `--link-env`, `--link-infra`, `--secrets`, `--team`). |
+| `dev [start|stop|list|logs|prune]` | Remote dev sandbox (bidirectional sync; `--link-env`, `--link-infra`, `--secrets`, `--team`). `--remote <name>` = server selection (alias of `--server`). Container gets RAW internal-host env (resolves on overlay); `localhost:N` tunnel variants printed for laptop tools only. Prod-env/`--secrets` links require confirmation (`--yes` skips; non-interactive without it fails loud); non-interactive + link + public URL forces basicauth (password printed once to stderr). |
 | `init` | Initialize a new `servel.yaml`. |
 | `set-env-file` | Wire env_file into `servel.yaml`. |
 | `run <action>` | Run predefined action in deployed container (defined in `servel.yaml`). |
@@ -564,13 +564,16 @@ servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
 servel logs <name> -f                 # Follow logs
 servel watch <name>                   # Watch deploy progress — high-level phases/steps TUI (reads progress.json)
+                                      # Exits 0 on converged-running, NON-ZERO on failed deploy (safe for && chains)
 servel watch <name> --follow          # Wait for deploy to start, then watch
 servel attach [name|id-prefix]        # Stream raw build.log of in-progress build (BuildKit, nixpacks, bun output with full ANSI color via PTY)
                                       # No-arg: current dir's project. Ctrl+C detaches; build keeps running. Aliases: at
                                       # Use watch for "where am I in the pipeline?", attach for "why is this failing?"
 servel rm <name>                      # Remove
 servel rollback <name>                # Rollback version
-servel promote <src> <tgt>            # Promote deployment (env + domains)
+servel promote <src> <tgt>            # Promote deployment (env + domains). Target KEEPS its own domains (merge,
+                                      # not replace); plan lists kept/lost. Secrets hydrated from canonical .env.age
+                                      # (never stale spec.json). Emits critical audit event.
 servel promote src tgt --swap         # Bidirectional domain swap
 servel promote src tgt --dry-run      # Preview promotion plan
 servel promote src tgt --merge-env    # Merge env vars (vs replace)
