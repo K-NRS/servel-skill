@@ -366,7 +366,7 @@ Task -> What are you trying to do?
 +- Add infrastructure -> servel add <type> --name <name>
 |   +- Bundle? -> servel add redis,postgres --prefix app
 |   +- High-availability? -> servel add postgres --name db --ha
-|   +- Link to app? -> servel link myapp --infra db
+|   +- Link to app? -> servel link db  (from the app's project dir; saved to servel.yaml)
 |
 +- Debug/inspect -> servel logs <name> -f | servel exec <name> sh
 |   +- Infra? -> Use @ prefix: servel logs @mydb -f | servel exec @mydb --service rails sh
@@ -763,8 +763,8 @@ servel infra sql @supabase migration.sql --service db  # Supabase (targets db se
 servel infra sql @mydb ./migrations --track      # Tracked migrations (skip applied)
 servel infra sql @mydb ./migrations --track --status  # Show migration status
 servel infra sql @mydb ./migrations --track --force   # Re-apply changed migrations
-servel link myapp --infra db          # Link -> injects DATABASE_URL
-servel unlink myapp --infra db        # Unlink
+servel link db                        # Link (from app's project dir) -> saved to servel.yaml, injects DATABASE_URL on next deploy
+servel unlink db                      # Unlink (persisted to servel.yaml)
 servel deps myapp                     # Show dependencies
 servel connect db                     # Quick connect to infra
 ```
