@@ -105,7 +105,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Lifecycle (apps + infra)
 | Command | What it does |
 |---|---|
-| `deploy` | Build + push + create/update service + post-deploy probe + auto-heal. Compose / Dockerfile / preset / nixpacks auto-detected. |
+| `deploy` | Build + push + create/update service + post-deploy probe + auto-heal. Final summary derives status/replicas from current Swarm tasks (`?/N` or `?/global` when unavailable). Compose / Dockerfile / preset / nixpacks auto-detected. |
 | `redeploy` | Re-apply stored spec without source code (good for env-only changes; respects `servel.yaml` edits since 2026-05-15 — use `--no-refresh` to disable). |
 | `rollback` | Roll to previous image; same convergence + probe contract as deploy. **Bare `rollback` = `live_version − 1`, where "live" is the running generation, NOT the newest record.** A killed/failed deploy leaves a higher-versioned dead record that a bare rollback skips past — servel warns when one exists. To restore a known-good version after a failed deploy, pass it explicitly (`servel rollback <app> <version>`) rather than bare rollback. |
 | `restart` | Force-update service (same as `docker service update --force`, but tracked). |
@@ -519,7 +519,7 @@ Without `--yes`/consent in a non-interactive context, destructive commands (`rm`
 `--json` is a **global flag** (bound on root, inherited by all commands). When set, the command emits a single structured JSON object/array on **stdout** and routes all human output (progress, spinners, banners) to **stderr** — so an agent can parse stdout deterministically. Color is auto-disabled. Errors still emit a JSON object with a populated `error` field AND a non-zero exit code (read both).
 
 Commands with a typed `--json` envelope (prefer these when parsing):
-- `ps --json` (status + integer `running_replicas`/`desired_replicas`), `infra --json`, `inspect --json`, `find --json`
+- `ps --json` → `{deployments:[{...,replicas:"1/2"}],total_count,protected_count,dev_sessions?,unknown_count?}`; `replicas` is a string and uses `?/2` when task observation is unavailable. Also: `infra --json`, `inspect --json`, `find --json`
 - `deploy --json` → `{deployment_id, name, url, status, elapsed_seconds, error}`
 - `rm --json` → `{name, removed, error}`
 - `add --json` → `{name, type, category, status, connection_env, ...}`
@@ -560,7 +560,7 @@ servel deploy --quiet                 # Minimal output (only final result)
 # (persisted in spec as magic_subdomain). Claim failure never fails the deploy —
 # it prints "subdomain pending — retry: servel domains claim <name>"; the daemon
 # retries in the background. Custom domain later via `servel domains add`.
-servel ps                             # List deployments (footer teaser flags underused services: idle + over-replicated → run `servel cap` for the scale-down/rm breakdown)
+servel ps                             # List deployments; task-derived replicas show ?/N when unavailable, never fabricated 0/N
 servel ps --all-servers               # List across all servers
 servel ps --tree                      # Tree view with dependencies
 servel logs <name> -f                 # Follow logs
@@ -1059,13 +1059,13 @@ Full reference: `website/content/docs/reference/visitor-ip.mdx`.
 ```bash
 servel verify <name>                  # Full verification
 servel verify config                  # Verify configuration
-servel verify health <name>           # Check service health
+servel verify health <name>           # Current Swarm tasks + HTTP; 5+ current-generation restarts fail; Docker health healthy/starting/unhealthy/none; unavailable evidence stays unknown
 servel verify ssl <domain>            # Check SSL certificates
 servel verify cf-ssl [project]        # Classify CF→origin SSL mode (Full strict / Flexible / Off)
 servel verify dns <domain>            # Check DNS configuration
 servel verify routing <name>          # Check Traefik routing
 servel verify dependencies <name>     # Check dependencies
-servel verify resources               # Check resource availability
+servel verify resources               # Check resource availability; no local/empty stats = unknown, SSH or stats JSON failure = error; --quiet keeps both
 ```
 
 ### Dev Mode
