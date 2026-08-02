@@ -237,7 +237,9 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 | `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
 | `servers [check]` | Multi-server dashboard. |
 | `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** `node add worker --provider hetzner [--type cx42] [--region nbg1]` (BYOC) creates the VM on a connected cloud provider first — ssh-target is omitted; falls into the same join flow, stamps provider metadata for teardown. |
-| `cloud [connect|status|disconnect]` | BYOC provider tokens. `cloud connect hetzner` stores the API token age-encrypted client-side (`~/.servel/cloud/`), live-verified before save; `status` shows token validity + `managed-by=servel` VM count. Provider: `hetzner` (cx32/fsn1/ubuntu-24.04 defaults). Token via `--token`, stdin pipe, or hidden prompt — never logged. Destroy paths refuse VMs missing the `managed-by=servel` label. |
+| `cloud [connect|status|disconnect]` | BYOC provider tokens. `cloud connect hetzner` stores the API token age-encrypted client-side (`~/.servel/cloud/`), live-verified before save; `status` shows token validity + `managed-by=servel` VM count. Provider: `hetzner` (cx32/fsn1/ubuntu-24.04 defaults). Token via hidden prompt (preferred) or stdin pipe — neither reaches shell history or argv. `--token` is a
+scripting-only escape hatch: it lands in shell history and is visible in `ps`; passing it from an interactive
+TTY prints a stderr warning (piped/scripted use stays silent). Never logged. Destroy paths refuse VMs missing the `managed-by=servel` label. |
 | `capacity` / `cap` / `forecast` | Capacity forecast + per-node health verdicts + node recommendations. Prints a cluster headline (`cluster healthy` / `cluster busy but within capacity` / `N node(s) strained` / `N node(s) need attention`) immediately after the title. Per-node reason lines follow the Current Capacity table for any non-healthy node. LOAD column is always dim — high loadavg alone never makes a node strained or critical. Unit Capacity table columns: `RESERVED \| ALLOC \| ACTUAL \| MAX \| UTIL` + a one-line legend under the table. Reservation Health top-3 (both over- and under-reserved) rank by biggest offender in unit currency, not raw signed reclaim. Entries display servel identities — `myapp` / `@infra (svc)` / `~system` — never raw docker service names (raw only when the infra can't be resolved), and each class carries a `fix:` hint (over-reserved → daemon auto-trim + `servel stop <app>` when unneeded; phantom load → auto-reserve on next `servel deploy`; over-limit → raise `resources.*` in servel.yaml). |
 | `units` | Unit-based capacity overview (declared limits + live estimates — the ALLOC currency). |
 | `rebalance` | Auto-redistribute services (memory / tasks strategies; planner simulates live CPU as well as memory). |
@@ -577,7 +579,10 @@ servel promote <src> <tgt>            # Promote deployment (env + domains). Targ
                                       # (never stale spec.json). Emits critical audit event.
 servel promote src tgt --swap         # Bidirectional domain swap
 servel promote src tgt --dry-run      # Preview promotion plan
-servel promote src tgt --merge-env    # Merge env vars (vs replace)
+servel promote src tgt --merge-env    # Merge env vars (vs replace). REPLACE (default) removes target-only
+                                      # keys INCLUDING target-only secrets (--env-rm on the live service).
+                                      # --dry-run lists every removal; secret keys shown by name + `(secret)`,
+                                      # values never printed. Use --merge-env to keep target-only keys.
 servel promote src tgt --rebuild      # Rebuild after (NEXT_PUBLIC_*)
 servel promote src tgt --cleanup-source  # Remove source after
 servel scale <name> 3                 # Scale replicas
@@ -664,6 +669,12 @@ migrations:
 - v1 is same-server only — a linked infra on another node/swarm errors with a `--skip-migrations` escape hatch (run manually via `servel infra sql` instead).
 - No `migrations:` block but a linked DB-capable infra + a conventional `migrations/`/`db/migrations/`/`supabase/migrations/` dir exists locally → prints ONE hint line suggesting the block. Never auto-runs without it.
 - Adopting on a project with an existing schema: `servel infra sql @mydb ./migrations --baseline` first, so deploy doesn't try to re-run migrations the DB already has.
+- **Destructive-DDL warning (detection-only, never blocks)**: migrations apply BEFORE the image build, so a
+  build failure leaves the OLD image against the NEW schema. Deploy warns when the SQL matches `DROP COLUMN`,
+  `DROP TABLE`, `DROP CONSTRAINT`, `RENAME COLUMN`, `RENAME TO`, `SET NOT NULL`, `ALTER COLUMN … TYPE`, or
+  `ADD CONSTRAINT … NOT NULL`. Advice: expand-contract — ship additive changes with the code, drop old columns
+  a deploy later. Lightweight regex, not a SQL parser: false positives possible. **Known nag**: it scans ALL
+  `.sql` files, not just pending ones, so one historical destructive migration re-warns on every deploy.
 
 ### Package Selection (what gets shipped)
 
@@ -824,7 +835,9 @@ servel remote status                  # Cluster health (CPU, memory, disk)
 servel remote add <name> user@host    # Add server (worker IP / cluster DNS auto-redirects to a swarm manager)
 servel remote add prod root@1.2.3.4 --yes   # Zero-prompt add + provision (CI/agents) — no email/domain gate
 servel remote add prod root@1.2.3.4 --email you@x.com --domain x.com  # Optional at add time: LE contact + primary domain
-servel cloud connect hetzner          # BYOC: store provider API token (age-encrypted, live-verified before save)
+servel cloud connect hetzner          # BYOC: hidden prompt (preferred; age-encrypted, live-verified before save)
+echo "$TOKEN" | servel cloud connect hetzner   # stdin pipe — CI-friendly, token never on argv
+servel cloud connect hetzner --token "$TOKEN"  # scripting only — leaks to shell history
 servel node add worker --provider hetzner  # BYOC: create VM on the provider + provision + swarm-join, one command
 servel remote list                    # List servers
 servel remote use <name>              # Switch default server
