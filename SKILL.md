@@ -563,7 +563,9 @@ servel deploy --quiet                 # Minimal output (only final result)
 # it prints "subdomain pending — retry: servel domains claim <name>"; the daemon
 # retries in the background. Custom domain later via `servel domains add`.
 servel ps                             # List deployments; task-derived replicas show ?/N when unavailable, never fabricated 0/N
-servel ps --all-servers               # List across all servers
+servel ps --all-servers               # List across all servers. Reads deployments/*/meta.json directly, so records whose
+                                      # Docker service is gone show STATUS=orphaned (JSON: "orphaned":true) instead of a stale
+                                      # "running". Only running/degraded records are flagged; stopped/failed/superseded are history.
 servel ps --tree                      # Tree view with dependencies
 servel logs <name> -f                 # Follow logs
 servel watch <name>                   # Watch deploy progress — high-level phases/steps TUI (reads progress.json)
@@ -572,7 +574,11 @@ servel watch <name> --follow          # Wait for deploy to start, then watch
 servel attach [name|id-prefix]        # Stream raw build.log of in-progress build (BuildKit, nixpacks, bun output with full ANSI color via PTY)
                                       # No-arg: current dir's project. Ctrl+C detaches; build keeps running. Aliases: at
                                       # Use watch for "where am I in the pipeline?", attach for "why is this failing?"
-servel rm <name>                      # Remove
+servel rm <name>                      # Remove. If no Docker service exists for <name>, rm falls back to the stored records
+                                      # and purges the orphaned generation dirs (+ their dangling Traefik routes) instead of
+                                      # failing "not found". Refuses while any service still backs the name, incl. compose
+                                      # sub-services (servel-<app>-<svc>-<env>). Matches app name OR deployment-ID prefix, and
+                                      # purges EVERY matching generation. --dry-run lists them without touching anything.
 servel rollback <name>                # Rollback version
 servel promote <src> <tgt>            # Promote deployment (env + domains). Target KEEPS its own domains (merge,
                                       # not replace); plan lists kept/lost. Secrets hydrated from canonical .env.age
