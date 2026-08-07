@@ -760,6 +760,16 @@ servel infra update db --memory 2g    # Update config (memory, cpu, domain, node
                                       #   "KN-MANAGER: needs 2048MB, 1820MB free — INSUFFICIENT" if the wave
                                       #   wouldn't fit. Diff-aware skip means per-service env changes don't
                                       #   roll the whole stack anymore.
+servel infra update db --version v2       # Repair a record whose stored template version is "unknown".
+                                      #   Symptom: EVERY template-dependent op (infra rotate above all) fails with
+                                      #   "template <type> has an unresolved version" while `servel infra` still
+                                      #   shows status: running — the listing gives no hint. The old error blamed
+                                      #   "client/server version skew" and said to run `servel upgrade`; that was
+                                      #   WRONG (reproduces with identical client+server builds) and is now fixed.
+                                      #   servel does NOT auto-resolve to latest: supabase v2 has 10 rotatable
+                                      #   credentials vs v1's 5, so guessing would rotate SECRET_KEY_BASE /
+                                      #   VAULT_ENC_KEY / PG_META_CRYPTO_KEY / LOGFLARE_* on a stack lacking them.
+                                      #   Value is validated against the type's declared versions AND must load.
 servel infra customize db --service db --memory 4GB
 servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
