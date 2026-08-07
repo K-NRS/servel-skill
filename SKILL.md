@@ -603,7 +603,7 @@ servel start @mydb --with-linked      # Start infra first, then linked deploymen
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
 servel exec <name> -- cmd args        # Run command in container
-servel inspect <name>                 # Detailed deployment info
+servel inspect <name>                 # Detailed deployment info (env/secrets masked by default; --show-secrets to reveal)
 servel history <name>                 # Deployment history
 servel versions <name>                # Available versions
 servel find myapp                    # Find across all servers
