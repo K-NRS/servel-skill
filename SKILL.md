@@ -620,7 +620,7 @@ servel start @mydb --with-linked      # Start infra first, then linked deploymen
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
 servel exec <name> -- cmd args        # Run command in container
-servel inspect <name>                 # Detailed deployment info (env/secrets masked by default; --show-secrets to reveal)
+servel inspect <name>                 # Detailed deployment info (secrets redacted as *** by default; --show-secrets to reveal)
 servel history <name>                 # Deployment history
 servel versions <name>                # Available versions
 servel find myapp                    # Find across all servers
@@ -1031,6 +1031,15 @@ servel redeploy <name>                # Apply secret changes to running containe
 servel deploy --migrate-secrets       # Auto-detect *_KEY, *_SECRET, *_PASSWORD
 ```
 
+**Reading redacted output (`inspect`, `env vars`, `infra inspect`, `infra vars`):** two rules run before serialization, so `--json` is redacted too.
+
+1. **By name** — key contains `PASS`/`PWD`/`SECRET`/`KEY`/`TOKEN`/`CREDENTIAL`/`AUTH`/`PRIVATE`/`JWT`/`SALT` anywhere (case-insensitive) → value becomes `***`. Covers `GOTRUE_SMTP_PASS`, `PGPASSWORD`, and PascalCase spec vars like `JwtSecret`.
+2. **By value shape** — any `scheme://user:password@host` has its password replaced regardless of key name: `postgres://supabase_admin:***@db:5432/postgres`. Catches `SUPABASE_DB_URL`, `GOTRUE_DB_DATABASE_URL`.
+
+The connection block of `infra vars` gets rule 2 as well — most hub templates build `Connection.URL` from a `connection_template` with the password inline.
+
+`***` is a mask, never a real value — do not copy it into configs or connection strings. `--show-secrets` bypasses both rules on `inspect`, `env vars` and `infra vars`; `infra inspect` has no reveal flag.
+
 **Applying secret changes to a running service:** `secrets copy` writes to encrypted `.env.age` on disk. To push values into the live container, run `servel redeploy <name>` — it diffs `spec.Env ∪ .env.age` against the live service env and emits `--env-add` / `--env-rm` (preserves user-added env vars; degraded-safe if inspect fails). `servel deploy <name>` does **not** accept a bare deployment name (requires path or yaml alias) — use `redeploy` for config-only application from any directory.
 
 **Applying `servel.yaml` env edits without rebuild (2026-05-15):** `servel redeploy` now refreshes `spec.Env` from local `./servel.yaml` when its name matches the target deployment, BEFORE computing the env diff. Closes the trap where editing `servel.yaml` (e.g. swapping `localhost` for swarm hostnames) had no effect on `servel redeploy` because it only reapplied stored spec env. Secrets stay untouched. Use `--no-refresh` to opt out. Name mismatch (running redeploy from a different project's directory) skips refresh with a warning.
@@ -1208,7 +1217,7 @@ See [DEV_LINK_ENV.md](references/DEV_LINK_ENV.md) for the full reference.
 
 ```bash
 servel env set <name> KEY=VALUE       # Set env var (no rebuild, restarts service)
-servel env vars <name>                # Show env vars (secrets masked)
+servel env vars <name>                # Show env vars (secrets redacted as ***; --show-secrets to reveal)
 servel env list                       # List environments
 servel env copy <src> <dst>           # Copy env vars: deployment ↔ deployment ↔ .env (plain vars)
 servel config show <name>             # Show deployment config
