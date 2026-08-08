@@ -505,6 +505,23 @@ servel deploy --remote staging-srv # Deploy to non-default server
 
 **Tip:** Use `servel remote list` to see available remotes, `servel remote use <name>` to change default.
 
+### ⚠️ Remotes that name a swarm WORKER node
+
+`servel remote list` shows a CLUSTER column like `KN (worker)` when a remote is a node inside another remote's swarm. Such a remote is a **machine**, not a control endpoint — every connection to it is redirected to one of the swarm's managers, because only a manager answers Docker's control API.
+
+Consequences you must plan around:
+
+| Intent | Correct command | Why not `-r <worker>` |
+|--------|-----------------|------------------------|
+| Per-node disk / CPU | `servel node ls -r <swarm>` (shows DISK + AVAIL per node) | `servel df -r <worker>` refuses — it would report the **manager's** filesystem |
+| Node disk detail | `servel df -r <swarm> --nodes` | same |
+| Reclaim images on a worker | `servel node prune <node>` | `servel prune -r <worker>` refuses — it would prune the **manager** |
+| Shell / raw command on the node | `servel ssh <worker-remote> -c '<cmd>'` | works: hops `ssh -J <manager>` to the node and prints the host it landed on |
+
+`servel ssh` is the only host-local verb that is safe against a worker remote — it resolves the node's real address from the swarm (repairing a stale `host` in the config if the connect-path self-heal had overwritten it with a manager's IP) and jumps through the manager. Everything else that reports host-local state refuses with a message naming the right command.
+
+Historic trap (fixed 2026-08-08): `servel ssh norastech -c hostname` printed `Running on norastech` and returned `KN-MANAGER`; `servel df -r norastech` printed `Server: norastech` above the manager's disk. If you see a servel build old enough to do this, verify with `hostname` before trusting any per-node reading.
+
 ## Non-Interactive / Agent Use (never hang on a prompt)
 
 When driving servel from an agent or script, a confirmation prompt with no TTY would block. Two global switches prevent that:
@@ -912,7 +929,11 @@ servel prune --all --volumes          # DATA LOSS: removes unused volumes
 ### Node Management
 
 ```bash
-servel node ls                        # List swarm nodes
+servel node ls                        # List swarm nodes (+ MEM/CPU/DISK/AVAIL per node when stats collect)
+# DISK % is df semantics: used/(used+avail). NOT used/total — total counts ext4's ~5% root reserve,
+# which under-reported by 6 points at the danger end (391G disk, 15G left = 97%, previously shown 91.2%).
+# AVAIL is the free bytes an ordinary writer has; coloured by absolute headroom (<20G amber, <5G red).
+# Same DISK/AVAIL pair appears in `servel df --nodes` and in the `servel df` filesystem summary.
 servel node ps                        # Per-node service view (grouped by host)
 servel node ps --node KN-MANAGER      # Filter to specific node
 servel node ps --json                 # JSON output
@@ -935,6 +956,10 @@ servel node schedule <name> --cron "0 3 * * *"       # Recurring drain
 servel node schedule <name> --cron "0 3 * * *" --reactivate "0 7 * * *"  # Drain + reactivate
 servel node schedule ls               # List scheduled actions
 servel node schedule cancel <name>    # Cancel schedule
+servel node prune <node>              # Reclaim Docker images on a worker (SSH hop manager -> node)
+servel node prune --all               # All worker nodes
+servel node prune <node> --dry-run    # Preview
+# The disk reading printed around each prune is advisory: a failed probe warns and the prune still runs.
 servel node install --all             # Install servel CLI on all workers
 servel node upgrade --all             # Upgrade servel CLI on all nodes
 servel node alias <hostname> <alias>  # Set friendly alias
