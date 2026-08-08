@@ -142,7 +142,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Exec / shell / tunnel
 | Command | What it does |
 |---|---|
-| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. **Known issue:** the TTY paths (`--shell`, bare `exec <name> sh`) still fail with `the input device is not a TTY` — the SSH stream carries no pseudo-terminal. Always use `-- <cmd>`; for a DB REPL use `servel infra sql @mydb`. |
+| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. From a real terminal, `--shell` / bare `sh` open a PTY-backed session (cross-node included). |
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
@@ -157,6 +157,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `infra` (no args) | List all infra. |
 | `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services / **Postgres connection saturation** (≥90% of `max_connections` = critical, SQLSTATE 53300 — catches the "auth/DB connection error" class on Supabase/postgres stacks). Also **ClickHouse system-log bloat** (G.2): any `clickhouse`/`openreplay`/`highlight` infra whose own `system.*` tables hold ≥20% of their volume (≥40% = error, 2 GiB floor). |
 | `infra repair @<name>` | Auto-rsync bind sources, alert on drift. |
+| `infra reconcile <name> [--dry-run]` | Re-apply the template's ENV to an already-deployed instance (closes template drift). `--dry-run` first — prints the per-service diff. Never regenerates existing secrets, never reverts operator pins, never deletes keys. Env only: images → `infra upgrade`, volumes/file_templates → recreate. |
 | `infra backup / restore` | Per-infra backup. |
 | `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. Directory input is tracked by default (`--no-track` to opt out); `--baseline` adopts tracking on a DB whose schema already exists. |
 | `infra logs @<name> [--service X]` | Multi-service infra logs. |
@@ -789,6 +790,26 @@ servel infra update db --version v2       # Repair a record whose stored templat
                                       #   credentials vs v1's 5, so guessing would rotate SECRET_KEY_BASE /
                                       #   VAULT_ENC_KEY / PG_META_CRYPTO_KEY / LOGFLARE_* on a stack lacking them.
                                       #   Value is validated against the type's declared versions AND must load.
+servel infra reconcile noras-openreplay --dry-run  # Re-render the hub template against the instance's STORED vars,
+                                      #   diff per service vs the live Swarm specs, print added/changed/pinned/live-only.
+                                      #   THE FIX for "template gained an env fix, existing instance never got it"
+                                      #   (`infra check` reports it as template_drift). Before this, remediation was
+                                      #   N hand-run `infra update --service X --env K=V` — the 2026-08-08 openreplay
+                                      #   repair took eight of them with values copied out of `docker service inspect`.
+                                      # — Existing values ALWAYS win: every generator is keyed on "absent from spec",
+                                      #   so a re-render never rotates a live secret. Only genuinely NEW template vars
+                                      #   are generated, and they're named before anything is applied.
+                                      # — Operator pins win over the template: keys set via
+                                      #   `infra update --service X --env` are reported "pinned", never reverted.
+                                      #   `--reset-pinned` lets the template win AND drops the pin from spec.json.
+                                      # — Nothing is deleted: live-only keys are reported (--show-extra), left in place.
+                                      # — Sensitive values masked, everything else visible (verifying a host/port is the point).
+                                      # — Audit: one infra.reconcile entry per service, keys_added/keys_changed listed.
+servel infra reconcile my-supabase --service auth   # Scope to one service of a multi-service stack
+                                      # SCOPE LIMIT: environment variables only. Image/version drift → `infra upgrade
+                                      #   --to <version>`; overrides.volumes / file_templates / healthcheck drift → recreate.
+                                      #   The re-render also picks up upstream compose-source changes, not just servel's
+                                      #   template edits — read the dry-run diff before applying.
 servel infra customize db --service db --memory 4GB
 servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
