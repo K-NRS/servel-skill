@@ -314,7 +314,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Backups
 | Command | What it does |
 |---|---|
-| `backup [server|@infra]` | Backup archive of server or infra. |
+| `backup [server|@infra]` | Backup archive of server or infra. Takes a SERVER NAME, not a subcommand — there is no `backup ls` (use `restic ls`); an unknown name fails immediately listing configured remotes, with no passphrase prompt. |
 | `restore <file>` | Restore a backup archive. |
 | `restic [backup|restore|ls|status|config|install|schedule|repos|rclone]` | Restic-based incremental backups (the modern path). |
 | `infra backup <name>` / `infra restore <name>` | Per-infra (pg_dump-aware for postgres, supabase). |
@@ -806,7 +806,12 @@ servel infra run-hooks db --init      # Run post-init hooks
 servel infra archives                 # Manage archived credentials
 servel logs @db -f                    # Follow infra logs (@ prefix)
 servel logs @chatwoot --service rails -f  # Multi-service infra logs
-servel infra backup db                # One-shot backup
+servel infra backup db                # One-shot backup. Volume archives STREAM from the node (tar to stdout over
+                                      #   SSH) — the source node needs ZERO free space regardless of volume size.
+                                      #   Space is preflighted on the DESTINATION; failure names free vs. required.
+                                      #   Send elsewhere with --output when the default path is tight.
+                                      #   Leftover `_servel_backup.tar.gz` inside a volume = pre-fix servel staged
+                                      #   there; servel warns but NEVER deletes it (may still be streaming).
 servel infra backup db --schedule "0 3 * * *"  # Schedule daily backup (alias for restic schedule add)
                                       # — backup-able types (postgres/mysql/mongodb/redis/supabase + HA) get a daily
                                       #   schedule INSTALLED AUTOMATICALLY at `servel add` time. Override with
