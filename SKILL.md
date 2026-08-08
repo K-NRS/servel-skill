@@ -135,14 +135,14 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `verify` | Health + SSL + DNS + routing sanity. |
 | `validate` | Validate `servel.yaml` before deploy. |
 | `detect` | Show what auto-detection would do for current project. |
-| `doctor` | Client/server connectivity + cluster-wide health (`migration` subcommand for end-to-end migration self-test). |
+| `doctor` | Client/server connectivity + cluster-wide health (`migration` subcommand for end-to-end migration self-test). `doctor overlay [-r <srv>]` probes every Traefik-routed service from the Traefik container's netns; services scaled to 0 desired replicas are skipped as operator intent (a skip line names them). "Reachable" = the probed port answered — any HTTP status, and redirect-to-HTTPS responses (e.g. poste.io 302) count. `--fix` force-recreates genuine failures (1h per-service cooldown). |
 | `df` | Disk usage (`--growers` for curated 16-path scan). |
 | `queue` | Build queue status. |
 
 ### Exec / shell / tunnel
 | Command | What it does |
 |---|---|
-| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). |
+| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. **Known issue:** the TTY paths (`--shell`, bare `exec <name> sh`) still fail with `the input device is not a TTY` — the SSH stream carries no pseudo-terminal. Always use `-- <cmd>`; for a DB REPL use `servel infra sql @mydb`. |
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
@@ -234,7 +234,7 @@ Self-signed bridge certs **do not work** through CF "Full" mode in 2024+ (CF tig
 ### Servers / nodes / cluster
 | Command | What it does |
 |---|---|
-| `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `refresh-managers`, `setup-granularban`, `rename`. **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
+| `remote [add|remove|list|use|status|provision|env|...]` | Server registry + provisioning. Subcommands: `dns`, `domain`, `tunnel-domain`, `keys`, `registry`, `gc`, `prune`, `cleanup`, `verify-domain`, `diagnose`, `install-nixpacks`, `migrate-traefik`, `update-traefik`, `fix-middlewares`, `access-logs`, `refresh-managers`, `setup-granularban`, `rename`. **`remote access-logs` (no subcommand, or `status`) is a read-only report of Traefik HTTP access-log state — accessLog section in `traefik.yml`, `/var/servel/logs/traefik` bind mount, logrotate config. `remote access-logs enable [server] [--force]` turns it on; it is opt-in and never auto-repaired, because adding the config/mount runs `docker service update` on the ingress (every route on that server is briefly unreachable) and access logs consume disk. It always confirms first — `--force`/`--yes` skips the prompt, non-interactive without either fails rather than restarting Traefik unasked. `remote access-logs disable [server] [--force]` is the off switch and is gated identically (removing the config also force-updates the ingress). Prefer it over `servel logs config --no-access-logs`, which takes no server argument, always resolves the default remote, and restarts Traefik with no confirmation at all. Always pass the same server name to `disable` that you passed to `enable`.** **`provision` now also installs + starts the `servel-daemon` systemd unit with `--local` and idempotently rewrites the unit on every run.** This is the canonical fix for "UNITS column shows `?` for every deployment" or "daemon crash-loop with `NRestarts > 10`" — both are symptoms of a legacy unit missing `--local` (the daemon tries to dial a non-existent SSH remote, exits 1, systemd respawns it forever, no stats are ever collected). Just re-run `servel remote provision` against the affected remote. |
 | `servers [check]` | Multi-server dashboard. |
 | `node [ls|ps|specs|capacity|health|add|remove|forget|rejoin|promote|demote|drain|activate|schedule|balance|alias|rename-all|label|prune|swap|events|install|install-events|upgrade]` | Swarm node management. **Never use raw `docker node ...`.** `node add worker --provider hetzner [--type cx42] [--region nbg1]` (BYOC) creates the VM on a connected cloud provider first — ssh-target is omitted; falls into the same join flow, stamps provider metadata for teardown. |
 | `cloud [connect|status|disconnect]` | BYOC provider tokens. `cloud connect hetzner` stores the API token age-encrypted client-side (`~/.servel/cloud/`), live-verified before save; `status` shows token validity + `managed-by=servel` VM count. Provider: `hetzner` (cx32/fsn1/ubuntu-24.04 defaults). Token via hidden prompt (preferred) or stdin pipe — neither reaches shell history or argv. `--token` is a
@@ -441,7 +441,7 @@ When you (the agent) are working in a repo with `.servel/state.json`, you have d
 | See what production is doing right now | `servel logs -f` |
 | Diagnose a recent crash / 5xx | `servel logs --tail 200` or `servel logs --since 10m` |
 | Check build output of the last deploy | `servel logs --build` |
-| HTTP request flow (status, latency, client IP) | `servel logs --http --tail 50` (after `servel logs config --access-logs`) |
+| HTTP request flow (status, latency, client IP) | `servel logs --http --tail 50` (check first with `servel remote access-logs`; enable with `servel remote access-logs enable` — restarts ingress, so it prompts) |
 | What env the container actually sees | `servel env vars` |
 | What's encrypted vs plaintext | `servel secrets ls` / `servel env vars --show-source` |
 | Service health, replicas, image, command | `servel inspect` |
@@ -619,7 +619,9 @@ servel start @mydb --with-linked      # Start infra first, then linked deploymen
                                       # counts (falls back to 1 when no record; apps retry until infra ready)
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
-servel exec <name> -- cmd args        # Run command in container
+servel exec <name> -- cmd args        # Run command in container (no TTY needed — works from CI/agent shells)
+servel exec @<infra> --service db --timeout 60s -- sh -c 'echo hi'   # one-shot + enforced timeout, clean stdout
+cat schema.sql | servel exec @mydb --stdin psql -U postgres          # --stdin = actually piping data in
 servel inspect <name>                 # Detailed deployment info (secrets redacted as *** by default; --show-secrets to reveal)
 servel history <name>                 # Deployment history
 servel versions <name>                # Available versions
@@ -908,7 +910,10 @@ servel df                             # Disk usage
 servel df --volumes                   # Volume usage by category
 servel df --nodes                     # Per-node usage
 servel doctor                         # Diagnose issues
-servel doctor --remote KN             # Remote server diagnostics — checks include B-class detectors (ACME mount path drift, CF Origin CA root install, stale swarm node.id pins, undersized sensitive secrets, missing servel.managed label, stateful safety-floor drift) emitted by the daemon's resilience layer
+servel doctor --remote KN             # Remote server diagnostics — checks include B-class detectors (ACME mount path drift, CF Origin CA root install, stale swarm node.id pins, undersized sensitive secrets, missing servel.managed label, stateful safety-floor drift) emitted by the daemon's resilience layer.
+                                      # The middleware-config check reads the file's `# Version:` header off the Traefik node, so a STALE config warns
+                                      #   ("stale on <node> (v5, want v6)"), not just a missing one. An old file is served by Traefik without complaint,
+                                      #   so everything added since that version is silently absent. Remediate with `servel remote fix-middlewares`.
 servel doctor --remote KN --fix       # DEPRECATED — per CLAUDE.md SELF-HEALING DISCIPLINE the daemon is the canonical self-healer. Today --fix still applies fixes for backwards compat (swap, middlewares, Traefik timeouts, Traefik config drift, ACME mount path, CF Origin CA root, managed-label coverage, missing tools restic/smartctl). Each class graduates to daemon-resident auto-repair with budget+circuit-breaker invariants in follow-up PRs; the flag will be removed once all classes are folded.
 servel doctor migration --target X    # End-to-end migration self-test (ephemeral postgres probe)
 servel bench migration --target X --size 1GB  # Compare fullcopy vs snapshot at real data size
@@ -1479,6 +1484,8 @@ servel security checkpoint rotate-key
 ```
 
 **Modes:** `off` | `suspicious` (default) | `always` | `under-attack` (auto-set on RPS spike).
+
+**Reserved paths:** `/__servel/checkpoint/challenge` and `/__servel/checkpoint/verify` are served on every routed domain (hostless Traefik router, always ungated) — that's where challenged visitors solve the challenge. Needs middleware config **v6**; on a v5 server the challenge redirect resolves nowhere and clients die on `dial tcp: lookup servel-system-checkpoint`. Fix with `servel remote fix-middlewares`. The post-challenge `continue` target is pinned to the visitor's own host.
 
 **Per-route + per-domain config in `servel.yaml`:**
 ```yaml
