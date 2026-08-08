@@ -826,9 +826,16 @@ servel infra stop db --with-linked    # Stop linked deployments first, then the 
 servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
 servel infra rm db                    # Remove
-servel infra check                    # Diagnose all (orphaned constraints, port conflicts, stuck services, resilience drift A.1/C.1/F.1/G.1/G.2)
-servel infra check mydb               # Check specific infra
+servel infra check                    # Orphaned constraints, port conflicts, stuck services, state mismatches, overlay reachability
+servel infra check mydb               # SAME checks + the FULL resilience scan, scoped to this infra
 servel infra check --all-nodes        # Cluster-wide resilience scan across every configured remote (skips swarm workers)
+# The resilience layer runs ONLY with a [name] or --all-nodes — a bare `infra check` never runs it.
+# When it does run, EVERY class runs; the name narrows SCOPE, it does not select classes:
+#   A.1 bind-source missing · C.1 unmanaged mounts · F.1 state-file drift
+#   B.1 Traefik ACME mount · B.2 CF origin CA root · B.3 stale node.id pin
+#   B.4 undersized secret · B.5 missing servel.managed label · B.6 stateful safety floors
+#   G.1 Postgres near max_connections · G.2 ClickHouse system.* log bloat
+# All detect-and-alert; none mutate. Full descriptions: `servel infra check --help`.
 servel infra repair @mydb             # Auto-rsync missing bind sources; coalesce duplicate node pins (`multiple_node_pins`); alert on spec/state drift (resilience layer)
 servel infra repair @mydb --dry-run   # Preview what the resilience layer would auto-repair
 servel infra sql @mydb schema.sql     # Run SQL file against database (raw; single files aren't tracked by default)
