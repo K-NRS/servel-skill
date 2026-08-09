@@ -796,9 +796,13 @@ servel infra reconcile noras-openreplay --dry-run  # Re-render the hub template 
                                       #   (`infra check` reports it as template_drift). Before this, remediation was
                                       #   N hand-run `infra update --service X --env K=V` — the 2026-08-08 openreplay
                                       #   repair took eight of them with values copied out of `docker service inspect`.
-                                      # — Existing values ALWAYS win: every generator is keyed on "absent from spec",
-                                      #   so a re-render never rotates a live secret. Only genuinely NEW template vars
-                                      #   are generated, and they're named before anything is applied.
+                                      # — LIVE CREDENTIALS ARE NEVER OVERWRITTEN, absolutely: any secret-classified key
+                                      #   that already has a value on the running service is preserved and reported
+                                      #   ("= live credential preserved"), whatever the re-render produced. Name-matching
+                                      #   the spec was NOT enough — KN's template var is JWT_REFRESH_SECRET while the live
+                                      #   key is COMMON_JWT_REFRESH_SECRET, and the first plan proposed rotating four live
+                                      #   JWT/token secrets (2026-08-09). Rotation stays `servel infra rotate`. Only secret
+                                      #   keys absent from the live service get a generated value, named before applying.
                                       # — Operator pins win over the template: keys set via
                                       #   `infra update --service X --env` are reported "pinned", never reverted.
                                       #   `--reset-pinned` lets the template win AND drops the pin from spec.json.
@@ -819,7 +823,8 @@ servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upg
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
-servel infra run db                  # List available actions
+servel infra run db                  # List available actions (resolved from the template version on the
+                                     # record; `latest` resolves via the server's template meta.yaml)
 servel infra run db psql             # Run action; `interactive: true` actions get a PTY from a terminal,
                                      # and degrade to a one-shot exec from CI/agent shells (no TTY error)
 servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
