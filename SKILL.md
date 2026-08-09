@@ -820,7 +820,8 @@ servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
 servel infra run db                  # List available actions
-servel infra run db psql             # Run action (e.g. interactive shell)
+servel infra run db psql             # Run action; `interactive: true` actions get a PTY from a terminal,
+                                     # and degrade to a one-shot exec from CI/agent shells (no TTY error)
 servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
 servel infra run mysupabase add-auth-provider --var Provider=google --var ClientID=123  # Enable OAuth; omit ClientSecret from --var to get a hidden prompt. Any var/env name containing password|secret|token|key|credential is auto-detected sensitive across ALL infra types — hidden prompt + encrypted at rest, no per-template annotation needed.
 servel infra run db schema --dry-run # Preview action
