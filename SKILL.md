@@ -517,6 +517,8 @@ Consequences you must plan around:
 | Per-node disk / CPU | `servel node ls -r <swarm>` (shows DISK + AVAIL per node) | `servel df -r <worker>` refuses — it would report the **manager's** filesystem |
 | Node disk detail | `servel df -r <swarm> --nodes` | same |
 | Reclaim images on a worker | `servel node prune <node>` | `servel prune -r <worker>` refuses — it would prune the **manager** |
+| Disk full, need the real top consumer | `servel df --growers --top 20` | Sweeps `/var/servel/*` + `/var/lib/docker/*` at DEPTH 1 (was a hardcoded allowlist that missed `/var/servel/releases` — 63GB, 52% of servel-official, 2026-08-09). Footer states coverage: "measured X of Y used" + unaccounted bytes + the `du -xh --max-depth=1 /` command to chase what lives outside those roots. |
+| Release binaries eating the hub disk | `servel prune --releases --dry-run` then `--keep N`; automate with `servel server gc schedule --daily` (timer keeps 20/channel, more conservative than the manual 10 — nobody watches a timer) | Every `make release-and-upgrade` uploads ~205MB × 4 platforms and NOTHING pruned them: 314 alpha versions = 63GB. NEVER deletes the version the channel manifest serves, nor the `--keep` most recent (default 10); REFUSES entirely if manifest.json is unreadable. A deleted version is one `servel upgrade` can't fetch — pinned clients break. |
 | Shell / raw command on the node | `servel ssh <worker-remote> -c '<cmd>'` | works: hops `ssh -J <manager>` to the node and prints the host it landed on |
 
 `servel ssh` is the only host-local verb that is safe against a worker remote — it resolves the node's real address from the swarm (repairing a stale `host` in the config if the connect-path self-heal had overwritten it with a manager's IP) and jumps through the manager. Everything else that reports host-local state refuses with a message naming the right command.
@@ -540,7 +542,7 @@ Without `--yes`/consent in a non-interactive context, destructive commands (`rm`
 
 Commands with a typed `--json` envelope (prefer these when parsing):
 - `ps --json` → `{deployments:[{...,replicas:"1/2"}],total_count,protected_count,dev_sessions?,unknown_count?}`; `replicas` is a string and uses `?/2` when task observation is unavailable. Also: `infra --json`, `inspect --json`, `find --json`
-- `deploy --json` → `{deployment_id, name, url, status, elapsed_seconds, error}`
+- `deploy --json` → `{deployment_id, name, url, status, elapsed_seconds, detached?, error?, failure?}`. `status` is `running` (success), `failed`, or `dispatched` (`--detach` — build still going server-side, NOT a success). `error` is always ONE line. On failure, `failure` carries the diagnosis: `{phase?, category?, summary?, remediation[], log_tail[]}` — `phase` (`build`/`push`/`converge`/`deploy`/`probe`/`runtime`) whenever the deploy reached the build pipeline (omitted for earlier preflight failures, where `error` + `remediation` already say it all), `category`/`summary` only when a known pattern matched, `log_tail` ANSI-stripped and capped (20 lines / 500 chars per line). Early failures that carry their own fix lines (e.g. disk pressure → `servel df --growers`) surface them in `remediation` too. **Read `failure` before fetching any log** — it is built from the same analysis that produces the human error, so a log fetch usually adds nothing.
 - `rm --json` → `{name, removed, error}`
 - `add --json` → `{name, type, category, status, connection_env, ...}`
 - `doctor --json` → `{checks:[{name,status,message}], healthy, ...}`
@@ -555,10 +557,16 @@ The MCP tools already return JSON internally and carry annotations (read-only / 
 
 ### Deploy
 
-**IMPORTANT: Always use `--verbose` flag when deploying.** It shows full build output, making it much easier to diagnose issues and understand what's happening. Without it, build output is summarized and critical context is lost.
+**Pick the deploy mode by who is reading the output.**
+
+- **You are the reader (agent / script): `servel deploy --json --quiet`.** One blocking call, one JSON object on stdout at the end, all progress on stderr. A failed deploy comes back with a `failure` digest (phase + root cause + remediation + bounded log tail), which is what you would otherwise have gone digging in the build log for. See "Deploying without watching" below — this is the default; do not stream a deploy you are only going to summarize.
+- **A human is watching the terminal: `--verbose`.** It shows full build output live, which is the right call when a person is diagnosing a build interactively. It is the wrong call for an agent: it pours the entire BuildKit stream into your context on every deploy, success or failure.
+
+Escalate to `--verbose` (or `servel logs --build`) only when a `failure` digest came back without a `category`/`summary` and its `log_tail` did not explain the failure.
 
 ```bash
-servel deploy --verbose               # Auto-detect & deploy (ALWAYS use --verbose)
+servel deploy --json --quiet          # Agents/scripts: blocking, one object at the end
+servel deploy --verbose               # Humans: full live build output
 servel deploy --verbose --preview --ttl 24h     # Preview with cleanup
 servel deploy --verbose --link-infra db,redis   # Link infrastructure (internal DNS by default when same-swarm)
 servel deploy --verbose --link-infra db --public   # Force public-domain hostnames (e.g. for cross-swarm)
@@ -630,6 +638,32 @@ servel find myapp                    # Find across all servers
 servel find @mydb                    # Find infrastructure only
 servel find --type postgres          # Filter by infra type
 ```
+
+### Deploying without watching (agents: read this before your first deploy)
+
+A deploy can take several minutes. Supervising it — streaming build output, re-checking progress, deciding at each step — is the single most expensive way to consume one, and it buys nothing: the outcome is knowable in one object at the end.
+
+**Do this:**
+
+```bash
+servel deploy --json --quiet
+```
+
+Run it as a **background/long-running task and let it finish.** One call, one JSON object, no polling. Then branch on `status`:
+
+| `status` | meaning | next move |
+|---|---|---|
+| `running` | deployed and live | read `url`, done |
+| `failed` | see `failure` | act on `failure.remediation`; fix and redeploy |
+| `dispatched` | `--detach` only — still building server-side | `servel watch <name>` (exits non-zero on failure) or `servel ps --json` later |
+
+**On failure, act on the digest, not the log.** `failure.phase` tells you which layer died, `failure.summary`/`category` name the root cause, `failure.remediation` lists the fix, and `failure.log_tail` carries the evidence lines. Fetch `servel logs --build` only when the digest matched no pattern AND its `log_tail` did not explain the failure — that is the exception, not the routine.
+
+**Anti-patterns that waste enormous context for no added certainty:**
+- `--verbose` on a deploy no human is watching — pipes the whole BuildKit stream into your context; the digest already carries the part that matters.
+- `--detach` followed by a poll loop (`ps`/`watch`/`logs` every few seconds) — strictly more expensive than one blocking call. Use `--detach` only when you genuinely must not block.
+- Re-running a failed deploy with different flags before reading `failure` — the phase alone usually rules out most guesses.
+- `attach`/`watch` as a routine step. `watch` is for *"where is this in the pipeline?"* on a deploy someone else started; `attach` is for *"why is this failing right now?"* during interactive debugging.
 
 **Build args injected automatically:**
 - `SERVEL_GIT_COMMIT` -- Git commit SHA (available during build)
@@ -810,6 +844,13 @@ servel infra reconcile noras-openreplay --dry-run  # Re-render the hub template 
                                       # — Sensitive values masked, everything else visible (verifying a host/port is the point).
                                       # — Audit: one infra.reconcile entry per service, keys_added/keys_changed listed.
 servel infra reconcile my-supabase --service auth   # Scope to one service of a multi-service stack
+servel infra reconcile noras-openreplay --only KAFKA_SERVERS  # Scope to ONE KEY across all services.
+                                      #   NEEDED because templates tracking a moving ref (openreplay pins
+                                      #   source.ref: main) re-render everything upstream changed: on KN that was
+                                      #   483 inert *_VERSION vars burying the 13 services still carrying the real
+                                      #   KAFKA_SERVERS drift. --service can't split that (noise is per-KEY, on every
+                                      #   service). A key no template/live service defines is an ERROR, not an empty
+                                      #   diff — a typo must never read as "already in sync".
                                       # SCOPE LIMIT: environment variables only. Image/version drift → `infra upgrade
                                       #   --to <version>`; overrides.volumes / file_templates / healthcheck drift → recreate.
                                       #   The re-render also picks up upstream compose-source changes, not just servel's
