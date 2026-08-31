@@ -1748,6 +1748,27 @@ servel deploy --verbose --migrate-secrets
 - `servel set-env-file .env` — convenience command to set `env_file` in servel.yaml
 - `servel env set myapp KEY=VALUE` — update env var on running deployment without rebuild
 - NEXT_PUBLIC_* vars are kept in build-time env AND runtime (Next.js needs them at build time)
+
+**Build-time env (`build.env` / `--build-env`)** — for values consumed *during* the build, not just by the running container. Static site generators bake these into their output, so a runtime env var is too late to change them.
+
+```yaml
+# servel.yaml
+build:
+  env:
+    SITE_ORIGIN: https://example.com
+```
+
+```bash
+servel deploy --build-env SITE_ORIGIN=https://example.systems   # repeatable; merges over build.env key-by-key
+```
+
+- Works for **all** build types (preset / nixpacks / Dockerfile). Dockerfile builds get the `ARG`/`ENV` declarations injected automatically — do not tell users to hand-edit their Dockerfile.
+- **Two deployments from one source tree** — this is the supported way. `servel.yaml` holds the primary's value; the second passes `--name`, `--domain` and `--build-env`. Nothing is written to the working tree, so neither deploy can read the other's value. Never suggest `.env.local` for this: a leftover poisons the other deployment's next build.
+- Recorded per deployment in `.servel/state[.env].json`; shown by `servel inspect` under **Build Env**; previewable with `servel deploy --dry-run`.
+- Baked into the image and visible via `docker history` — **build configuration, not secrets**. Secrets go in `secrets:` / `servel secrets`.
+- Changing a value invalidates the image cache (no silent reuse of an image built with the old value).
+- `SERVEL_*` keys are rejected — that prefix is reserved for values servel injects.
+- Do **not** reach for `--build-cmd "VAR=x bun run build"`. `--build-env` is the declared surface and the only one that shows up in state, `inspect` and `--dry-run`. (Until 2026-08-31 the `--build-cmd` prefix idiom was silently a no-op for any project with a servel.yaml.)
 - **Stale-key drift defense**: `servel secrets reconcile <app>` (interactive) or `prune_secrets: true` in servel.yaml (auto on every deploy). Removes encrypted secrets no longer declared and not injected by infra.
 
 ### Log Observability
