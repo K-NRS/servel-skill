@@ -331,7 +331,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Registry / images
 | Command | What it does |
 |---|---|
-| `registry [info|ls|tags|du|rm|retain|migrate|decommission]` | Self-hosted + GHCR + GitLab + custom. |
+| `registry [info|ls|tags|du|rm|retain|migrate|decommission]` | Self-hosted + GHCR + GitLab + custom. Self-hosted blobs can live on S3-compatible object storage (`servel remote registry setup --storage`); `decommission --volume-only` drops the leftover local volume afterwards. |
 | `cache [...]` | Build cache management. |
 | `ports [list|show|stats|release]` | TCP/UDP port allocation tracking. |
 | `tags` / `tag` / `untag` | Tag deployments + infra. |
@@ -1616,9 +1616,32 @@ servel registry migrate               # Auto-detect project + remote from .serve
 servel registry migrate <project>     # Move project to its auto-detected registry (ghcr/gitlab)
 servel registry migrate --all --continue-on-error  # Bulk migrate
 servel registry decommission          # Tear down self-hosted (after migrate, --keep-volume for safety)
+servel registry decommission --volume-only  # Drop ONLY the leftover blob volume after a move to object storage
 ```
 
 **Always-preserved tags** for retain: `latest`, `stable`, `main`, `master`. Daily systemd timer runs retention + GC at `/var/servel/scripts/registry-retain.sh`.
+
+**Object-storage backend for the SELF-HOSTED registry (opt-in, per server; local volume stays the default):**
+
+```bash
+servel remote registry setup --storage s3://<bucket>[/<prefix>] \
+  --endpoint https://fsn1.your-objectstorage.com --region eu-central-1
+servel remote registry setup --storage s3://<bucket> --region eu-central-1   # AWS S3 proper (no --endpoint)
+servel remote registry setup --storage @<infra>[/<bucket>[/<prefix>]]        # servel-managed MinIO (type must be minio)
+servel remote registry setup --storage @registry-store --dry-run             # numbered plan, writes nothing
+servel remote registry show           # `Storage: s3 <bucket>/<prefix> @ <endpoint> (redirect: on|off)`; --json adds storage_backend
+```
+
+- Flags: `--endpoint` (REQUIRES an explicit `http://`/`https://` scheme — it decides TLS to the store; implies path-style), `--region` (required only for AWS proper; defaults `us-east-1` with an endpoint), `--access-key`/`--secret-key` (prompted if omitted), `--credentials-stdin` (access key on line 1, secret on line 2), `--force`, `--dry-run`.
+- `@<infra>` bucket defaults to `servel-registry`; endpoint + `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` are read from the infra, so you pass no keys.
+- **Redirect rule** (automatic): ON for a public endpoint (nodes pull straight from the store; egress billed there), OFF for `@infra`, RFC1918/loopback/link-local, `localhost`, `*.servel-network`, any single-label hostname, and anything unparseable (fail-safe) — a worker's host dockerd cannot resolve an overlay endpoint, so blobs stream through the registry. Empty endpoint = AWS S3 proper = ON.
+- Secret key lives ONLY in `/var/servel/registry/config.yml` (root 0600, bind-mounted read-only). `/var/servel/config.yaml` records backend/bucket/prefix/endpoint/region, never key material.
+- **An existing local registry is MIGRATED, not started cold**: pre-copy live via a one-off `rclone/rclone` container → hold the build queue → read-only maintenance → delta copy → flip (start-first) → verify a manifest on up to 3 repos → rollback to the local spec on failure. Only PUSHES pause for the whole window — pulls and reschedules are interrupted just by the two service restarts, not by the copying; a deploy that starts queues behind it, one already mid-push aborts the migration before anything changes. Run it ON the registry's node — off-node is refused. Volume kept; drop later with `registry decommission --volume-only`.
+- Refusals: `@minio` colocated with the registry (move it or `--force`), multi-manager swarm (`config.yml` + htpasswd are manager-local bind mounts — copy to every manager, then `--force`), `servel remote registry move` → `registry storage is remote (s3); nothing to move`.
+- SPOF: with `@minio` that node blocks all pushes + reschedules when down; with a provider, the provider does, plus per-pull egress while redirect is on.
+- Sizes report `remote`: `registry du` → `On-disk: remote (s3 <bucket>/<prefix>)`, `registry info` → `Backend: s3` and no Data node row, `registry retain` suppresses the before/after reclaim summary, `df --growers` suggests `decommission --volume-only` instead of `retain`. No bucket size is computed (no S3 SDK in the tree).
+- GC: `servel remote registry gc` and `registry retain` warn that blob GC walks the whole bucket; skip with `registry retain --skip-gc`. The **daemon's disk auto-reclaim declines the blob-GC step with reason `backend-remote`** (unreadable config → skipped as `storage backend unknown`, fail-safe), and `setup --storage` re-renders the scheduled GC + retention scripts so the daily timer stops it too.
+- `decommission` NEVER deletes or empties the bucket — it prints the bucket/prefix left behind and removes `/var/servel/registry/config.yml` (it holds the secret key). `--volume-only` refuses on a local backend.
 
 ### Auth Setup (External Registries)
 
