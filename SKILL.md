@@ -1164,6 +1164,9 @@ servel domains list-redirects         # List redirects
 servel routes <name>                  # Show deployment routes
 ```
 
+
+**Scheduled backups (`servel restic schedule`) — read before relying on one.** The generated systemd unit runs `servel restic backup …` ON the server as root. Until 2026-09-13 every restic verb demanded a remote, so those units died nightly with `Error: server not found:` — KN logged 0 successes and 56 failures in 30 days, navola failed all 4. Fixed: a server-side invocation with no `--server` now runs locally (`servermode.IsServer`); naming a remote explicitly still means "go there". `schedule add` also preflights the server and REFUSES to write a unit that cannot run, naming the fix (`upgrade-servers` for an old binary, `restic install` for a missing repo password). Prerequisite that is easy to miss: `servel restic install <server>` must have been run — it generates `/var/servel/secrets/restic/repo.key`; without it every job fails even though the restic binary is present. Hooks run via `/bin/bash -c` on the server (NOT in a container — use `docker exec …` yourself), and a failing pre-hook aborts the backup.
+
 ### Traefik (Routing Layer)
 
 ```bash
