@@ -105,7 +105,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Lifecycle (apps + infra)
 | Command | What it does |
 |---|---|
-| `deploy` | Build + push + create/update service + post-deploy probe + auto-heal. Final summary derives status/replicas from current Swarm tasks (`?/N` or `?/global` when unavailable). Compose / Dockerfile / preset / nixpacks auto-detected. |
+| `deploy` | Build + push + create/update service + post-deploy probe + auto-heal (probe failure is ATTRIBUTED before it is repaired — see Post-deploy probe attribution). Final summary derives status/replicas from current Swarm tasks (`?/N` or `?/global` when unavailable). Compose / Dockerfile / preset / nixpacks auto-detected. |
 | `redeploy` | Re-apply stored spec without source code (good for env-only changes; respects `servel.yaml` edits since 2026-05-15 — use `--no-refresh` to disable). |
 | `rollback` | Roll to previous image; same convergence + probe contract as deploy. **Bare `rollback` = `live_version − 1`, where "live" is the running generation, NOT the newest record.** A killed/failed deploy leaves a higher-versioned dead record that a bare rollback skips past — servel warns when one exists. To restore a known-good version after a failed deploy, pass it explicitly (`servel rollback <app> <version>`) rather than bare rollback. |
 | `restart` | Force-update service (same as `docker service update --force`, but tracked). |
@@ -1179,6 +1179,18 @@ servel traefik debug <deployment>     # Debug routing config for a deployment
 servel traefik restart                # Restart Traefik
 ```
 
+**Backends are the service VIP, not task IPs.** Every routed service carries `traefik.swarm.lbswarm=true`, so Traefik routes to the Swarm virtual IP and lets Swarm load-balance. Without it Traefik balances across individual task IPs, which are reallocated on every task — a `stop-first` update destroys the address Traefik holds and mints a new one, so the edge 502s on a healthy service until Traefik's provider re-lists (`refreshSeconds`, 15s default). Sticky sessions are the sole exception: affinity needs per-task addressing, so a deployment configuring `sticky_sessions` keeps task-IP balancing and the stale window that comes with it.
+
+**Post-deploy probe attribution.** A failing probe is classified before anything is repaired, because a 502 does not say which layer is wrong. Servel compares the backends Traefik holds against the addresses Swarm runs and records `routing_verdict` in the audit log:
+
+| Verdict | Action |
+|---|---|
+| `stale` — Traefik points at a destroyed task | Wait up to 45s for the provider to re-list, re-probing as it does. **Never respawns the app** (that moves the address again and restarts the race). If the router never catches up: one force-update on **Traefik**. |
+| `current` — Traefik points at the running task | Route is fine, container is not serving. One app respawn if `auto_respawn` is on, then `degraded`. **Never rolls Traefik** — it cannot help. |
+| `no-router` / `no-backend` / `unknown` | Pre-existing heal path, unchanged. `unknown` = Traefik's API could not be read. |
+
+The `degraded` message and audit entry name only the recovery steps that actually ran — a deployment with `auto_respawn: false` is no longer told a force-respawn was attempted and failed. `servel rollback` shares this contract.
+
 **Slow uploads 502 at ~60s?** Traefik v3.x ships a 60s `entryPoints.<name>.transport.respondingTimeouts.readTimeout` default. Servers provisioned before that knob was set in `traefik/config.go` inherit the broken default. Run `servel doctor --remote <name> --fix` — the `Traefik Timeouts` check resolves the live `traefik.yml` from the docker mount (handles legacy `traefik.yaml`), fills in `300s` only when missing (never downgrades higher operator-chosen values), and force-restarts Traefik. Idempotent.
 
 ### Visitor IP / Forwarded Headers
@@ -1244,7 +1256,7 @@ servel verify health <name>           # Current Swarm tasks + HTTP; 5+ current-g
 servel verify ssl <domain>            # Check SSL certificates
 servel verify cf-ssl [project]        # Classify CF→origin SSL mode (Full strict / Flexible / Off)
 servel verify dns <domain>            # Check DNS configuration
-servel verify routing <name>          # Check Traefik routing
+servel verify routing <name>          # Check Traefik routing. A missing origin HTTP→HTTPS redirect only WARNs when a redirect middleware is actually configured; `cloudflare: true` routes deliberately omit it (SkipHTTPSRedirect) and now PASS with "no origin HTTP→HTTPS redirect configured" instead of a permanent false-positive warning.
 servel verify dependencies <name>     # Check dependencies
 servel verify resources               # Check resource availability; no local/empty stats = unknown, SSH or stats JSON failure = error; --quiet keeps both
 ```
