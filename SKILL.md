@@ -1179,7 +1179,7 @@ servel traefik debug <deployment>     # Debug routing config for a deployment
 servel traefik restart                # Restart Traefik
 ```
 
-**Backends are the service VIP, not task IPs.** Every *deployment* carries `traefik.swarm.lbswarm=true`, so Traefik routes to the Swarm virtual IP and lets Swarm load-balance. Without it Traefik balances across individual task IPs, which are reallocated on every task — a `stop-first` update destroys the address Traefik holds and mints a new one, so the edge 502s on a healthy service until Traefik's provider re-lists (`refreshSeconds`, 15s default). Two exceptions: `sticky_sessions` needs per-task addressing, so those deployments keep task-IP balancing and the stale window; and infra services (`servel add`) label themselves from compose templates, not the deployment generator, so they are still task-IP routed (follow-up).
+**Backends are per-task IPs, and they move.** Traefik's Swarm provider balances across individual task IPs; a `stop-first` update destroys the one Traefik holds and mints a new one, so the edge 502s on a healthy service until the provider re-lists (`refreshSeconds`, 15s default). servel handles this by waiting (see below), NOT by switching to the VIP: `traefik.swarm.lbswarm=true` makes Traefik 3.7.13 drop the service from its table entirely, silently, with no error at INFO — measured both directions on KN 2026-09-13. A regression test in `internal/resources` blocks re-adding it.
 
 **Post-deploy probe attribution.** A failing probe is classified before anything is repaired, because a 502 does not say which layer is wrong. Servel compares the backends Traefik holds against the addresses Swarm runs and records `routing_verdict` in the audit log:
 
