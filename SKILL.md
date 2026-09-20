@@ -307,7 +307,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Monitoring / analytics / alerts
 | Command | What it does |
 |---|---|
-| `status [enable|disable|list]` | Public status page (gatus-backed). `enable` enumerates every public Traefik route (file-provider + label-routed deployments), renders a gatus config.yaml, deploys `servel add gatus <name>`, seeds the config as a Docker config object mounted at `/config/config.yaml` (node-independent across a multi-node swarm), and writes the Traefik route. `disable` removes infra + route files (scoped to the infra's own gatus backend) + config objects. `list` (alias for bare `servel status`) shows URL, auth on/off, monitored count, and live up/down from the gatus API. Flags: `--domain`, `--auth` (generate basic auth, printed once), `--node`, `--name` (default `status`), `--title`. On-cluster caveat: a full ingress outage takes the page down too — complement with external monitoring. |
+| `status [enable|disable|list]` | Public status page (gatus-backed). `enable` enumerates every public Traefik route (file-provider + label-routed deployments), renders a gatus config.yaml, deploys `servel add gatus <name>`, seeds the config as a Docker config object mounted at `/config/config.yaml` (node-independent across a multi-node swarm), and writes the Traefik route. `disable` removes infra + route files (scoped to the infra's own gatus backend) + config objects. `list` (alias for bare `servel status`) shows URL, auth on/off, monitored count, and live up/down from the gatus API. Flags: `--domain`, `--auth` (generate basic auth, printed once), `--node`, `--name` (default `status`), `--title`. **`enable` now emits an `alerting:` block built from the cluster's own `/var/servel/alerts.yaml` (2026-09-20)** — the page NOTIFIES, not merely displays. It refuses a `REPLACE_WITH_...` placeholder outright (a page that looks monitored and cannot notify is worse than one that plainly does not), and every generated endpoint carries its own `alerts:` stanza because gatus merges `default-alert` only into endpoints that already declare one. With no usable channel it says so and generates a dashboard. On-cluster caveat: a full ingress outage takes the page down too — complement with external monitoring. |
 | `alerts [enable|disable|setup|add|remove|test|pause|resume|history|config|monitored|status]` | Telegram/Slack/Discord/webhook alerts with pressure detection. |
 | `analytics` | Visitor analytics from Traefik logs (`--cluster` for cluster view). |
 | `telemetry [status|enable|disable]` | Anonymous telemetry settings. |
@@ -343,7 +343,7 @@ servel job doctor --keep   # leave probe on failure for debugging
 | `selfcheck` | Offline binary smoke (config parse + state-dir + docker ping). No network. Used by the upgrade flow against the staged candidate. |
 | `upgrade-servers` | Bump all configured servers to match client version. **Rolling by default** (one node at a time, health-gated, auto-revert); `--no-rolling` opts out. `--rolling` deprecated (no-op). Gate = binary answers `version --json` AND daemon heartbeat fresh on the NEW build id (daemonless servers fall back to binary-only). On gate failure: remote auto-revert (`sudo servel upgrade --rollback` + daemon restart over SSH), budgeted 3/24h per `server:<name>`; if the server-local sentinel already reverted (old build fresh) it's classified `reverted (server-local sentinel)` with NO second rollback. A worker remote whose configured `host` equals its swarm manager's is **skipped**: dialing it reaches the MANAGER, so it would upgrade that host twice and print `success` for a node it never touched (KN 2026-09-13 — table said 4/4 while norastech ran an Aug 8 binary). The skip message gives the working route (`servel ssh <worker> -c 'servel upgrade --yes'`, then restart its units). A worker with its own distinct address is still upgraded normally, and `servel ssh <worker>` now persists the node address it rediscovers, so the shadowing clears itself after one hop. Remotes joined via `servel access join` (non-empty `role`) are **skipped before probing** — ACL-scoped identities can't swap a server binary; naming one with `--server` errors. A binary too old to have `servel upgrade` is **reinstalled over SSH** (local binary first, servel.dev download as fallback) then upgraded normally — confirmation required, auto-confirmed by `--force`/`--yes`, fails safe non-interactively. First failure aborts the rest (breaker). |
 | `check-versions` | Audit server versions for compatibility. |
-| `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. **Disk auto-reclaim keys (all default-ON, live on next tick, filed under `--section general` because they carry no `cluster_` prefix): `disk_auto_reclaim_enabled` (true), `disk_auto_reclaim_budget` (4), `disk_auto_reclaim_budget_window` (24h), `disk_auto_reclaim_registry_gc` (true).** A budget of 0/negative clamps back to 4 — `disk_auto_reclaim_enabled=false` is the only off switch. |
+| `daemon` | Auto-failover daemon controls (server side). Subcommands: `start`, `stop`, `restart`, `status`, `install`, `uninstall`, **`config {list,get,set}`** (added 2026-05-20 — reflection-driven get/set on the daemon Config block in `/var/servel/daemon/daemon-state.json`; sibling of `servel config set` which targets ServerConfig). Most keys take effect on next tick; `*_interval` / `*_cooldown` need `--restart-daemon`. Example: `servel daemon config set routing_traefik_repair_budget=8`. **Routing-repair cost keys (2026-09-20): `routing_repair_concurrency` (2) caps in-flight repairs cluster-wide and excess repairs SKIP to the next cycle rather than queueing; `routing_repair_timeout` (2m) is the per-repair hard deadline. The backend leg of a repair now runs `--detach`; the Traefik escalation leg still waits and a timed-out roll still spends its budget. The whole routing cycle is skipped when `servel-system-traefik` has no running task — you get one `ingress_down` alert instead of one alert per deployment.** **Disk auto-reclaim keys (all default-ON, live on next tick, filed under `--section general` because they carry no `cluster_` prefix): `disk_auto_reclaim_enabled` (true), `disk_auto_reclaim_budget` (4), `disk_auto_reclaim_budget_window` (24h), `disk_auto_reclaim_registry_gc` (true).** A budget of 0/negative clamps back to 4 — `disk_auto_reclaim_enabled=false` is the only off switch. |
 | `ai [question]` | Throwaway AI assistant session with full server context. Auto-detects agent (Claude Code → Codex → opencode); `--agent claude\|codex\|opencode`, `--remote <server>`, `--config <path>` (default `~/.servel/ai.yaml`). One-shot: `servel ai "why is myapp down?"`; interactive: bare `servel ai`. Spawns the agent wired to servel's MCP server over SSH (destructive tools enabled, gated by the agent's confirm prompt). |
 | `ai install <claude\|codex\|opencode>` | **Persistent** MCP registration — writes servel's MCP server into the agent's own config so any session can manage servers. Idempotent (re-run updates in place); merges are surgical (siblings preserved). `--remote a,b` (one entry per remote: `servel-a`, `servel-b`; default = configured default remote), `--global` (else project-local: `.mcp.json` / `.codex/config.toml` / `opencode.json`), `--read-only`, `--allow-destructive`, `--binary <path>`. **Secure default: read+write registered, destructive (rm/rollback/prune) OMITTED unless `--allow-destructive`.** `servel ai uninstall <agent>` reverses it. |
 | `mcp-server --remote <server>` | **Hidden.** Starts servel's MCP server on stdio for any MCP-compatible client (used by `servel ai` + `servel ai install`). Exposes up to 25 tools (14 read / 8 write / 3 destructive) that run `servel` over SSH. **Posture flags: `--read-only` (read tools only), `--allow-destructive` (include rm/rollback/prune). Default = read+write, destructive omitted** — a tool that isn't registered can't be called. Permission tiers (`~/.servel/ai.yaml`): read=auto, write=confirm, destructive=confirm; `allowed_remotes` allowlist + per-tool overrides (`deny`/`confirm`/`auto`). Tool behaviors: read/destructive **annotations** (hints for host UIs); **typed errors** `{error:{code,message,remediation}}` (codes: transient=retry-ok, not_found/denied/needs_confirmation=don't-retry, invalid_input, internal); destructive tools require **out-of-band elicitation** approval (LLM can't self-confirm); `servel_deploy` streams **progress** when given a `progressToken`; `servel_ps`/`servel_infra` accept `limit`+`cursor` **pagination** (returns `total`+`next_cursor`). |
@@ -369,6 +369,15 @@ Task -> What are you trying to do?
 |
 +- Add infrastructure -> servel add <type> --name <name>
 |   +- Bundle? -> servel add redis,postgres --prefix app
+|   +- Multi-service stack you do not fully use? -> servel add supabase db --without analytics,supavisor,realtime
+|      (2026-09-20. Only services the template declares `optional_services:` can be declined —
+|       `--without db` fails at the CLI, not at 3am. Persisted to spec.json, so it survives a
+|       recreate, unlike `servel scale @stack/svc 0`. Supabase optional: analytics, supavisor,
+|       realtime, imgproxy, studio, functions. NOT `--tier`, which is validated, echoed,
+|       forwarded and never read.)
+|      Templates may declare a `connection_budget:`; a stack whose pools + app headroom exceed
+|      max_connections is REFUSED at provision time with the arithmetic. Declined services do
+|      not count toward it.
 |   +- High-availability? -> servel add postgres --name db --ha
 |   +- Link to app? -> servel link db  (from the app's project dir; saved to servel.yaml)
 |
@@ -622,6 +631,12 @@ servel promote src tgt --rebuild      # Rebuild after (NEXT_PUBLIC_*)
 servel promote src tgt --cleanup-source  # Remove source after
 servel scale <name> 3                 # Scale replicas
 servel scale <name> 0                 # Scale to 0 (same as stop)
+servel scale @stack/service 0         # Park ONE service of a multi-service stack.
+                                      # One `docker service scale`, no re-render, no db
+                                      # restart. The daemon reads replicas=0 as operator
+                                      # intent and will NOT revert it. Does NOT survive a
+                                      # full re-render — use `servel add --without` for
+                                      # a permanent decline.
 servel restart <name>                 # Restart deployment
 servel stop <name>                    # Stop deployment (scales to 0)
 servel start <name>                   # Start stopped deployment
@@ -699,9 +714,10 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 - `--quiet, -q` -- Minimal output (only final result)
 - `--dashboard` -- Real-time TUI dashboard
 - `--env` -- Target environment
-- `--build-on <node>` -- Build on specific node. **Auto-selection now gates on disk before ranking on RAM:** a candidate at >=90% used (df semantics) is skipped with `disk gate skipped <host> at N% (>=90% used)`; an UNMEASURED node is neutral (never excluded); if every candidate is over the ceiling the least-full one is used anyway. The gate only re-routes — the >=95% preflight is still the only thing that BLOCKS a deploy (`--force-low-disk` overrides that, 85-94% only warns).
+- `--build-on <node>` -- Build on specific node. **Managers are excluded from auto-selection whenever a worker is eligible (2026-09-20)** — a build is the heaviest thing servel runs and the manager is the node whose loss takes the cluster with it. `--build-on` still wins (naming a host is intent), and it now WARNS when it is dropped instead of being silently discarded. **A deploy that selected a remote build host it cannot reach REFUSES** and names `--local-build`, rather than quietly building on whichever node runs the deploy. **Auto-selection also gates on disk before ranking on RAM:** a candidate at >=90% used (df semantics) is skipped with `disk gate skipped <host> at N% (>=90% used)`; an UNMEASURED node is neutral (never excluded); if every candidate is over the ceiling the least-full one is used anyway. The gate only re-routes — the >=95% preflight is still the only thing that BLOCKS a deploy (`--force-low-disk` overrides that, 85-94% only warns).
 - `--local-build` -- Build locally, push to registry
 - `--force-low-ram` -- Proceed with a remote build even when no build node has the framework's recommended RAM. By default servel now FAST-FAILS before a doomed under-RAM build (e.g. Next.js 16 + Turbopack needs ~4GB) and tells you to use `--local-build`; pass this to override and try anyway.
+- **Stall is fatal (2026-09-20).** A build producing NO output for 20 minutes aborts and the server-side job is actually terminated (it used to warn twice and wait out a 45-minute absolute deadline while the job ran on). Override with `SERVEL_DEPLOY_STALL_TIMEOUT=45m`, or `0` to disable for a legitimately silent build. Do not paper over a stall by raising it without reading `servel logs <id> --op 1` first.
 - `--new` -- Force new deployment with unique subdomain
 - `--converge-timeout <duration>` -- Convergence wait time (default: 5m)
 - `--force-server` -- Suppress server mismatch warnings
@@ -1018,6 +1034,16 @@ servel prune --all --volumes          # DATA LOSS: removes unused volumes
 
 ```bash
 servel node ls                        # List swarm nodes (+ MEM/CPU/DISK/AVAIL per node when stats collect)
+                                      # STATE `down·host-up` (2026-09-20) = swarm says down but the
+                                      # host answered our probe: the machine is ALIVE and its swarm
+                                      # agent is wedged, almost always CPU starvation. Every task
+                                      # pinned there is unschedulable; if it is a manager the
+                                      # cluster ingress may be down with it. Read its load average
+                                      # (`servel node health`) and `journalctl -u docker` BEFORE
+                                      # restarting anything — it often recovers on its own. Plain
+                                      # `down` = the host did not answer either. Stats are now
+                                      # probed even for a down node, which is exactly when they
+                                      # matter.
 # DISK % is df semantics: used/(used+avail). NOT used/total — total counts ext4's ~5% root reserve,
 # which under-reported by 6 points at the danger end (391G disk, 15G left = 97%, previously shown 91.2%).
 # AVAIL is the free bytes an ordinary writer has; coloured by absolute headroom (<20G amber, <5G red).
