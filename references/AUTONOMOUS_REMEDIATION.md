@@ -44,7 +44,7 @@ This document covers all six remediations shipped on 2026-05-07. Cross-links to 
 
 **Tier 2 safety bounds (over-reserved auto-apply):**
 
-- ✅ Stateless services only — DBs, queues, storage skipped (suffix-matched via `infra.IsStatefulByName`)
+- ✅ Stateless services only — skipped when the name marks a DB/queue/storage (`infra.IsStatefulByName`) OR the service writes to a bind mount or volume (`rebalance.DetectWritableDataMounts`; read-only and tmpfs mounts don't count). An app with SQLite on a bind mount is never trimmed, since a trim replaces its task. Stateful services are also absent from `servel cap`'s Reservation Health view
 - ✅ High confidence required (≥24 samples; `≥12 = medium`, `≥6 = low`, below 6 → skipped)
 - ✅ Bounded delta: ≤25% of current reservation per cycle (large over-reservations converge over multiple ticks, never thrash)
 - ✅ Per-service per-dimension cooldown: 24h
