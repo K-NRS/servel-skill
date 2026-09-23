@@ -179,7 +179,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | Command | What it does |
 |---|---|
 | `data bind / unbind / heal / migrate / status / check / volumes` | Per-service data binding (which node holds the data). |
-| `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. |
+| `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. Snapshot ships the one named volume the service mounts (read from its spec); two volumes are refused (use `--strategy fullcopy`). No strategy, `--plan` or `--cleanup` touches a sibling infra's volumes (`lokal` vs `lokal-quota`). |
 | `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. |
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
 | `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
@@ -914,7 +914,12 @@ servel infra stop db                  # Stop (scales to 0; warns if deployments 
 servel infra stop db --with-linked    # Stop linked deployments first, then the infra (records pre-stop replica counts)
 servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
-servel infra rm db                    # Remove
+servel infra rm db                    # Remove (volumes kept, bind data archived)
+servel infra rm db --volumes --dry-run  # List the exact volumes --volumes would delete; removes nothing
+servel infra rm db --volumes          # Delete ONLY db's own volumes (servel-infra-db[-*], never db-staging's) on
+                                      #   THIS node; listed before the prompt. Data on another node → refuses and
+                                      #   names the data node; --force removes the record, exits non-zero.
+                                      #   `servel rm @db --dry-run` previews too (it used to really remove).
 servel infra check                    # Orphaned constraints, port conflicts, stuck services, state mismatches, overlay reachability
 servel infra check mydb               # SAME checks + the FULL resilience scan, scoped to this infra
 servel infra check --all-nodes        # Cluster-wide resilience scan across every configured remote (skips swarm workers)

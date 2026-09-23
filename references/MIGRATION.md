@@ -47,6 +47,8 @@ Pre-copy live migration via restic Alpine sidecars:
 
 **Requirements:** restic installed on both source and target nodes.
 
+**Which volume:** the one named volume the service mounts, read from the service spec (`ContainerSpec.Mounts`, `Type=volume`), never picked from a name listing. Two named volumes → refused before anything stops (use `--strategy fullcopy`); none (bind mounts only) → falls back to `fullcopy`; unreadable spec → the move fails. Every strategy, `--plan` and `--cleanup` only see volumes named `servel-infra-<name>[-*]` that this infra owns — a co-located `<name>-quota` sibling is never copied, snapshotted or cleaned up.
+
 ### `fullcopy`
 
 Stop, full tar+rsync of all volumes, restart. Conservative path.
