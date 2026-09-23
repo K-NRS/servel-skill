@@ -1548,6 +1548,8 @@ servel access request-hint --project myapp "msg"  # Project-specific hint
 servel ps    # (in project dir) → auto-joins if approved, then runs
 ```
 
+**`join_key_seed` in `.servel/state.json` — secret scanner flagged it?** It is NOT a server credential. It's a base64 ed25519 seed (copied from the server on deploy) whose public key sits in servel's `/var/servel/access/authorized_keys` (an extra sshd `AuthorizedKeysFile`; the client logs in as root) as `restrict,command="/usr/local/bin/servel server join-shell"` — no shell, no port forwarding. The join shell answers only `JOIN` (needs a valid invite token), `REQUEST` (files an access request an admin must approve) and `CHECK` (request status); JOIN/REQUEST are rate-limited per IP and audited. It exists so a teammate who clones the repo can run `servel access request` with no prior access. Leaked, it exposes server host + host fingerprint and lets anyone submit access requests — a social-engineering vector only if an admin approves blindly; it grants no deploy, exec or shell. Servel's own docs disagree on committing state.json (architecture doc says "gitignored"/"controversial"; servel only gitignores `.servel/*.local.json` and the access-request flow needs state.json in the repo). **Don't untrack state.json unilaterally** — it breaks `servel access request` for teammates. Explain the above, then offer: keep it / untrack it / rotate (`servel access setup --rotate-join-key` — invalidates the old seed in every repo and outstanding invites; refresh each repo's state.json by redeploying). Details: [ACCESS.md → Join key](references/ACCESS.md#join-key-join_key_seed).
+
 ### IP Bans
 
 ```bash

@@ -154,6 +154,17 @@ The file itself requires `user-manage` to read directly via `cat`.
 | `path traversal not permitted` | Path contains `..` | Use absolute canonical paths |
 | `your role X lacks Y permission` | Role-level gap | Either upgrade role or add scope with `--permissions` (additive, server-scoped) |
 
+## Join key (`join_key_seed`)
+
+- **What:** base64 ed25519 seed; `state.ProjectState.JoinKeySeed` (`internal/state/project.go`). Server copy at `/var/servel/access/join_key_seed`; deploy reads it into the project's `.servel/state.json` (`readServerJoinKeyAndFingerprint`, `internal/cli/clideploy/remote_state.go`) alongside `server_host` + `ssh_host_fingerprint`.
+- **Server side:** `ConfigureJoinKey` (`internal/server/join_key.go`) writes the derived pubkey to `/var/servel/access/authorized_keys` (added to sshd's `AuthorizedKeysFile` by `internal/server/init_system.go`; `connectViaJoinKey` logs in as `root`) as `restrict,command="/usr/local/bin/servel server join-shell" <key>`.
+- **What it can do:** join shell (`internal/server/join_shell.go`) accepts only `JOIN <token> <pubkey>` (valid invite token required), `REQUEST <pubkey> <email> <reason> <duration>` (creates a pending access request — admin approval required), `CHECK <pubkey>` (status). JOIN + REQUEST share a per-IP rate limit (5 / 15 min) and write to the audit log.
+- **Why it's in the repo:** `servel access request` in a cloned project uses it via `connectViaJoinKey` (`internal/cli/access/access_request.go`) — no prior access needed.
+- **Commit-safety conflict:** `docs/internal-docs/architecture/state-management-architecture.md` calls state.json "user-specific, gitignored" and committing it "controversial"; servel itself only adds `.servel/*.local.json` to `.gitignore`, leaving state.json tracked.
+- **Leak impact:** server host + host fingerprint disclosed; anyone can file rate-limited access requests (social-engineering risk if approved blindly). No deploy / exec / shell.
+- **Rotate:** `servel access setup --rotate-join-key` → `ConfigureJoinKey(force=true)`: old seed dead in every repo, outstanding invite tokens invalidated. Each repo's state.json needs refreshing (next deploy re-reads the seed).
+- **Agent rule:** scanner hit → explain the above, don't treat it as a server credential, don't untrack state.json unilaterally; offer keep / untrack / rotate.
+
 ## Files at a glance
 
 ```
