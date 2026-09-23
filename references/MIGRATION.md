@@ -47,7 +47,9 @@ Pre-copy live migration via restic Alpine sidecars:
 
 **Requirements:** restic installed on both source and target nodes.
 
-**Which volume:** the one named volume the service mounts, read from the service spec (`ContainerSpec.Mounts`, `Type=volume`), never picked from a name listing. Two named volumes → refused before anything stops (use `--strategy fullcopy`); none (bind mounts only) → falls back to `fullcopy`; unreadable spec → the move fails. Every strategy, `--plan` and `--cleanup` only see volumes named `servel-infra-<name>[-*]` that this infra owns — a co-located `<name>-quota` sibling is never copied, snapshotted or cleaned up.
+**Which volume:** the one named volume the service mounts, read from the service spec (`ContainerSpec.Mounts`, `Type=volume`), never picked from a name listing. Two named volumes → refused before anything stops (use `--strategy fullcopy`); none (bind mounts only) → falls back to `fullcopy`; unreadable spec → the move fails; volume not on the source → refused.
+
+**Every strategy, `--plan` and `--cleanup`** work on the volumes the service spec mounts, plus any `servel-infra-<name>[-*]` volume the infra owns. A postgres `lokal` keeps its data in `lokal-var-lib-postgresql-data` (template naming `<name>-<target>`), and that is what fullcopy copies and `--cleanup` quarantines. A co-located `lokal-quota` (`lokal-quota-var-lib-postgresql-data`) is never copied, snapshotted or cleaned up. Refused before anything stops: unreadable spec, none of the mounted volumes on the source node, or a mounted volume named for another infra.
 
 ### `fullcopy`
 
