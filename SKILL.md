@@ -914,7 +914,8 @@ servel infra stop db                  # Stop (scales to 0; warns if deployments 
 servel infra stop db --with-linked    # Stop linked deployments first, then the infra (records pre-stop replica counts)
 servel infra stop db --service vector # Stop specific sub-service (multi-container infra)
 servel infra rename old new           # Rename
-servel infra rm db                    # Remove (volumes kept, bind data archived)
+servel infra rm db                    # Remove (volumes kept, bind data archived); deletes only db's own route
+                                      #   files (infra-db-<domain>.yml), never db-staging's
 servel infra rm db --volumes --dry-run  # List the exact volumes --volumes would delete; removes nothing
 servel infra rm db --volumes          # Delete ONLY db's own volumes on THIS node: what its services mount
                                       #   (postgres db → db-var-lib-postgresql-data) + owned servel-infra-db[-*];
