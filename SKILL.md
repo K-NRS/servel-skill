@@ -179,7 +179,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | Command | What it does |
 |---|---|
 | `data bind / unbind / heal / migrate / status / check / volumes` | Per-service data binding (which node holds the data). |
-| `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. Snapshot ships the one named volume the service mounts (read from its spec); two volumes are refused (use `--strategy fullcopy`). Every strategy, `--plan` and `--cleanup` act on the volumes the service spec mounts (postgres `lokal` → `lokal-var-lib-postgresql-data`) plus owned `servel-infra-<name>[-*]`; never a sibling's (`lokal-quota`). Refuses if none of them is on the source. |
+| `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. Snapshot ships the one named volume the service mounts (read from its spec); two volumes are refused (use `--strategy fullcopy`). Every strategy, `--plan` and `--cleanup` act on the volumes the service spec mounts (postgres `lokal` → `lokal-var-lib-postgresql-data`) plus owned `servel-infra-<name>[-*]`; never a sibling's (`lokal-quota`) volumes or services. Refuses if none of them is on the source. Without `--cleanup` the source keeps a stale copy; `infra rm --volumes` there refuses (data node is the target). |
 | `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. |
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
 | `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
@@ -919,9 +919,11 @@ servel infra rm db --volumes --dry-run  # List the exact volumes --volumes would
 servel infra rm db --volumes          # Delete ONLY db's own volumes on THIS node: what its services mount
                                       #   (postgres db → db-var-lib-postgresql-data) + owned servel-infra-db[-*];
                                       #   never db-staging's volumes or containers. Listed before the prompt.
-                                      #   Data on another node, or a mounted volume named for another infra →
-                                      #   refuses; --force removes the record, exits non-zero. A busy volume is
-                                      #   freed only by stopping db's own containers.
+                                      #   Data on another node (incl. a stale copy a move without --cleanup
+                                      #   left here), unreadable service mounts, or a mounted volume named for
+                                      #   another infra → refuses; --force removes the record, exits non-zero.
+                                      #   Remote: server refuses after your confirm too (only --force overrides).
+                                      #   A busy volume is freed only by stopping db's recorded containers.
                                       #   `servel rm @db --dry-run` previews too (it used to really remove).
 servel infra check                    # Orphaned constraints, port conflicts, stuck services, state mismatches, overlay reachability
 servel infra check mydb               # SAME checks + the FULL resilience scan, scoped to this infra
