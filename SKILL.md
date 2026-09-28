@@ -822,6 +822,8 @@ servel add chatwoot --var Domain=chat.example.com  # Auto-init on first deploy
 # Most templates use TitleCase (Password, JwtSecret, AdminEmail); some use UPPER_SNAKE.
 # Find canonical names: `servel infra vars <type>` or `servel add <type> --advanced`.
 servel infra status                   # Health check all (distinguishes "warming" from "failed" — see below)
+                                      #   0/0 services = "stopped" (never "healthy"); all-0 infra = stopped in list+status.
+                                      #   `infra backup` on a stopped infra fails fast: start -> backup -> stop.
 servel infra vars db                  # View env vars
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
                                       # — multi-service stacks AND single-replica stateful infra get a blast-radius
