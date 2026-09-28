@@ -773,6 +773,7 @@ Build context exclusion layers (later overrides earlier):
 4. `servel.yaml: deploy.exclude_patterns: [...]` -- explicit, in-config
 5. `--exclude <pattern>` -- one-shot CLI override
 6. `--include <pattern>` / `deploy.include` -- un-exclude (for `--skip-build` shipping `.next/`, `dist/`, etc.)
+7. **`.dockerignore`** -- applied LAST, only for Dockerfile builds (`build.type: dockerfile`, root `Dockerfile`, or `--dockerfile <path>`). Matched with `moby/patternmatcher` (BuildKit's own lib) -- negation (`!`), `**`, leading-`/` all work correctly, unlike layers 1-5's simple glob matching. Skipped for preset/Nixpacks/Railpack builds (servel generates their Dockerfile+.dockerignore server-side). A Dockerfile-specific ignorefile (`Dockerfile.build.dockerignore`) wins over plain `.dockerignore`, matching Docker. `servel.yaml`, the active Dockerfile, and the dockerignore file itself are always kept regardless of patterns. Prints a summary line when it trims anything: `.dockerignore: excluded 1,204 files (68.1 MB)`.
 
 ### Deploy Aliases
 
