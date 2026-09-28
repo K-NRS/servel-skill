@@ -993,6 +993,13 @@ servel capacity                       # Capacity forecast + per-node health verd
 # `servel remote update-traefik` (also wires the file provider for zero-downtime domain routing). Daemon config:
 # `http_activity_enabled`/`http_activity_interval` (metrics sampler, default 5m) and `underuse_advisor_enabled`/
 # `underuse_advisor_interval` (report recompute, default 30m).
+# `cap` also shows "Infra units (boundary activity)": per infra stack (grouped via the car-6 ownership rule — never a
+# bare name prefix, so `lokal-quota` never gets misattributed to `lokal`), bytes on established TCP connections whose
+# peer is OUTSIDE the stack's own boundary (another service, a cron job, an operator's psql) — intra-stack chatter,
+# health checks and pool keepalives never count. Status active/idle/unknown per unit; unknown (node unreachable, not
+# sampled yet) never reads as idle. Informational only — no suggested command, no auto-sleep (future release).
+# Sampled every 5m via nsenter into each container's netns from the host (never `docker exec`), persisted to
+# `/var/servel/metrics/boundary-socket-activity.json`.
 servel capacity --json                # JSON output (.cluster_status, .cluster_status_reason, per-node .verdict{level,reason} + .steal_pct + .system_pct, .rightsize, .stateful_moves, .underuse); unit_summary carries reserved_units/reserved_pct (canonical) + deprecated used_units/used_pct aliases + alloc_units/alloc_pct (0 if the units fetch soft-failed). .rightsize top entries carry an additive `display` field (servel identity: name / "@infra (svc)" / ~system) alongside the unchanged raw `Service` key
 # Unit vocabulary (cap table + units --json): RESERVED/reserved_units = scheduler view (Docker reservations);
 # ALLOC/alloc_units = declared limits + live estimates; ACTUAL/actual_units = observed usage. Gap between RESERVED
