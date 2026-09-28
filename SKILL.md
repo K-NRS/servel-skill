@@ -906,7 +906,10 @@ servel infra backup db --schedule "0 3 * * *"  # Schedule daily backup (alias fo
                                       #   schedule INSTALLED AUTOMATICALLY at `servel add` time. Override with
                                       #   --backup-schedule "..." or skip with --no-backup-schedule.
 servel infra restore db backup.sql.gz # Restore
-servel infra rotate db                # Rotate credentials
+servel infra rotate db                # Rotate credentials. Non-interactive needs --yes (else exits non-zero);
+                                      #   --dry-run lists keys only, never values. Connection record follows the
+                                      #   rotated password. `infra update --env DB_PASSWORD|DB_HOST|...` is refused
+                                      #   on single-service infra (derived) - change POSTGRES_PASSWORD etc. instead.
 servel infra restart db --force       # Force restart
 servel infra start db                 # Start
 servel infra start db --with-linked   # Start infra first, then linked deployments at recorded pre-stop replica counts (else 1)
