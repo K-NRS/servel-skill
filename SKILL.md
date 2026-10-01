@@ -1247,6 +1247,8 @@ servel traefik restart                # Restart Traefik
 | `current` — Traefik points at the running task | Route is fine, container is not serving. One app respawn if `auto_respawn` is on, then `degraded`. **Never rolls Traefik** — it cannot help. |
 | `no-router` / `no-backend` / `unknown` | Pre-existing heal path, unchanged. `unknown` = Traefik's API could not be read. |
 
+**Probe 4xx ≠ crash.** When the deploy error says `<url> answered HTTP 404` (or another 4xx), the container is running and something answered — usually the app has no page at the probed path. Fix with `post_deploy.probe.path: /healthz` (or `probe.accept: [404]`), not by reading crash logs; `servel verify routing <app>` rules out a missing route. Since 2026-10-01 the CLI no longer prints "Application crashed on startup" for unrecognized exit-1 failures, and phase detection uses the last logged stage (a probe failure after convergence is phase `probe`, also in `deploy --json` `failure.phase`).
+
 The `degraded` message and audit entry name only the recovery steps that actually ran — a deployment with `auto_respawn: false` is no longer told a force-respawn was attempted and failed. `servel rollback` shares this contract.
 
 **Slow uploads 502 at ~60s?** Traefik v3.x ships a 60s `entryPoints.<name>.transport.respondingTimeouts.readTimeout` default. Servers provisioned before that knob was set in `traefik/config.go` inherit the broken default. Run `servel doctor --remote <name> --fix` — the `Traefik Timeouts` check resolves the live `traefik.yml` from the docker mount (handles legacy `traefik.yaml`), fills in `300s` only when missing (never downgrades higher operator-chosen values), and force-restarts Traefik. Idempotent.
