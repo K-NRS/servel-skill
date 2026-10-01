@@ -798,7 +798,7 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | Database | postgres, mysql, mongodb, clickhouse, redis, libsql + HA variants (postgres-ha, mysql-ha, mongodb-ha, redis-ha) |
 | Queue | rabbitmq |
 | Search | meilisearch, typesense |
-| Platform | supabase, supabase-ha, chatwoot, typebot, convex, affine, forgejo, clawdbot, maily, surfsense |
+| Platform | supabase, supabase-ha, chatwoot, typebot, convex, affine, forgejo, clawdbot, maily, surfsense, hermes |
 | Analytics | plausible, umami, openreplay, highlight |
 | Monitoring | prometheus, grafana, loki, promtail, uptimekuma, gatus, peekaping |
 | Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
@@ -806,6 +806,29 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | Email | posteio |
 | CI | woodpecker, woodpecker-agent |
 | Blockchain | bitcoin, ipfs, lnd |
+
+**Hermes Agent (gateway + web dashboard):** `servel add hermes --name my-agent`,
+then `servel infra run @my-agent setup` and `servel restart @my-agent` to configure
+the user's model provider and messaging channels. Forward private ports with
+`servel pf @my-agent/hermes:9119=9119 @my-agent/hermes:8642=8642` and open
+`http://localhost:9119` (username `admin`). Retrieve credentials using
+`servel infra vars my-agent --service hermes --source service --show-secrets`
+in a private terminal: dashboard uses `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`,
+OpenAI-compatible `http://localhost:8642/v1` uses the separate `API_SERVER_KEY`.
+Never print these credentials in agent reports. The official image is pinned
+to `v2026.9.24` plus its manifest digest; gateway and panel share one supervised
+container and persistent `/opt/data`. Keep one replica and stop-first updates;
+never share the volume between concurrent gateways. No published host ports,
+host Docker socket, or live-tar backup support. Public panel access needs Hermes
+OAuth/OIDC and scoped trusted proxies; basic login is for private/tunnel access.
+Process health is not proof of configured model access or successful inference.
+Upgrade the target Servel server before installing Hermes: older builds drop
+Compose lifecycle fields. Compose infrastructure now preserves
+`deploy.update_config` (order, parallelism, delay, monitor, failure_action,
+max_failure_ratio), `stop_grace_period`, and `healthcheck.start_period` through
+the compose-go loader into Swarm. Existing database safety floors still apply.
+Omitted update blocks retain Servel defaults; explicit zero parallelism updates
+all tasks together and zero delay removes the batch delay.
 
 **Naming rules** (`<name>` must be a DNS label):
 - Lowercase `a-z`, digits `0-9`, hyphens — must start/end alphanumeric, max 63 chars. NO dots, underscores, uppercase.
