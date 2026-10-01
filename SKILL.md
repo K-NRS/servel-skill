@@ -807,7 +807,8 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | CI | woodpecker, woodpecker-agent |
 | Blockchain | bitcoin, ipfs, lnd |
 
-**Hermes Agent (gateway + web dashboard):** `servel add hermes --name my-agent`,
+**Hermes Agent (gateway + web dashboard):** [Hub template](https://hub.servel.dev/template/platforms/hermes/).
+Run `servel add hermes --name my-agent`,
 then `servel infra run @my-agent setup` and `servel restart @my-agent` to configure
 the user's model provider and messaging channels. Forward private ports with
 `servel pf @my-agent/hermes:9119=9119 @my-agent/hermes:8642=8642` and open
