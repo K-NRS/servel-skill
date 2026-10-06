@@ -2098,6 +2098,7 @@ update:
       - "timeout"
 stop_grace_period: 30s                # SIGTERM->SIGKILL on every task stop (deploy, rollback, scale-down, rm).
                                       # Top-level, Compose name. 1s-5m and < update.convergence_timeout; default 10s.
+                                      # docker-compose.yml app deploys honor per-service stop_grace_period too.
                                       # Ceiling, not delay. Removing the key resets to 10s on next deploy.
                                       # Verify: deploy log "stop: grace=30s"; `servel inspect <app>` Stop Grace Period;
                                       # --json: docker_service.Spec.TaskTemplate.ContainerSpec.StopGracePeriod (ns).
