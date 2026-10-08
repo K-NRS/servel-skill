@@ -900,6 +900,13 @@ servel infra reconcile noras-openreplay --only KAFKA_SERVERS  # Scope to ONE KEY
                                       #   --to <version>`; overrides.volumes / file_templates / healthcheck drift → recreate.
                                       #   The re-render also picks up upstream compose-source changes, not just servel's
                                       #   template edits — read the dry-run diff before applying.
+servel templates sync --force       # Pull hub templates NOW (nodes refresh every 12h). Without --force,
+                                      #   templates already cached on the server are SKIPPED ("0 synced") — so a
+                                      #   reconcile right after a hub fix silently diffs against the OLD template.
+servel infra reconcile my-supabase --service kong --only KONG_NGINX_WORKER_PROCESSES
+                                      # Supabase Kong memory fix (hub 2026-10-08): Kong defaulted to one nginx
+                                      #   worker per host CPU (~125 MiB each → 831 MiB idle on 6 cores). Templates
+                                      #   now pin 2; existing stacks need this reconcile (kong restarts once, ~180 MiB).
 servel infra customize db --service db --memory 4GB
 servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
