@@ -107,7 +107,7 @@ then matched against the user's effective permissions.
 | `/var/servel/traefik/**`, `routes/**`, `middlewares/**` | `config-read` |
 | `/var/servel/**` (deployments, infra, metrics, archives, ci, cluster, tmp, ports) | `status` |
 | system-wide `/proc` files (`meminfo`, `loadavg`, `drbd`, ...), `/proc/sys/`, `/proc/pressure/`, `/sys/` | `status` |
-| `/etc/docker/daemon.json`, `/etc/os-release`, `/etc/ssh/ssh_host_*_key.pub`, `*/.ssh/authorized_keys` | `status` |
+| `/etc/docker/daemon.json`, `/etc/os-release`, `/etc/ssh/ssh_host_{ecdsa,ed25519,rsa}_key.pub`, `*/.ssh/authorized_keys` | `status` |
 | `/etc/ssh/sshd_config`, `/etc/fstab`, `/etc/exports`, `~/.ssh/id_{ed25519,rsa}.pub` | `config-read` |
 | any other `/proc/...` (`/proc/<pid>/root`, `/proc/self/...`, `environ`) | `shell-root` |
 | anything else (`/etc/shadow`, `ssh_host_*_key`, `*/.ssh/id_*`, `/var/lib/docker/**`, relative paths) | `secrets-read` |
