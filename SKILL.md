@@ -1642,7 +1642,7 @@ servel ps    # (in project dir) → auto-joins if approved, then runs
     | `swarm.InspectService` (raw JSON, for packages below `cli`) | `service.inspect` | status |
 
     Never pipe `docker service ls | xargs docker service inspect` in client code: a scoped user's gate cannot map xargs operands to their names and refuses it.
-  - **Data regions.** Reading the contents of `/var/servel/{backups,recovery,restore,data,backup/repos,archives,volumes,restic,shards,dev,ci/workspace,ci/artifacts}/` or `cache/migrate*` needs `secrets-read`: database dumps, app persist data, archived infra specs and backup repository credentials. `ls`, `stat`, `du` and `find` walks stay at `status`. `tar -x`/`-t` reads its archive at that tier.
+  - **Data regions.** Reading the contents of `/var/servel/{backups,recovery,restore,data,backup/repos,archives,volumes,restic,shards,dev,ci/workspace}/` or `cache/migrate*` needs `secrets-read`: database dumps, app persist data, archived infra specs and backup repository credentials. `ls`, `stat`, `du` and `find` walks stay at `status`. `tar -x`/`-t` reads its archive at that tier.
   - **`servel infra archives`** needs `secrets-read` (`--json` prints archived credentials); `infra archives delete` needs `config-write`. `servel restic repos show`/`init` read the repo credentials and need `secrets-read`.
   - **`servel verify dependencies`** loads live env through `deploy.env`; without `deploy` it reports the env as not readable.
 
