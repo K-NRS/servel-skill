@@ -900,9 +900,12 @@ servel infra reconcile noras-openreplay --only KAFKA_SERVERS  # Scope to ONE KEY
                                       #   --to <version>`; overrides.volumes / file_templates / healthcheck drift → recreate.
                                       #   The re-render also picks up upstream compose-source changes, not just servel's
                                       #   template edits — read the dry-run diff before applying.
-servel templates sync --force       # Pull hub templates NOW (nodes refresh every 12h). Without --force,
-                                      #   templates already cached on the server are SKIPPED ("0 synced") — so a
-                                      #   reconcile right after a hub fix silently diffs against the OLD template.
+servel templates sync               # Pull hub templates NOW (nodes refresh every 12h) — run before reconcile
+                                      #   after a hub fix. Rewrites every cached template whose hub content changed,
+                                      #   prints each updated file, skips identical ones, never caches an invalid
+                                      #   hub response; exits non-zero if any file failed. Same code as the daemon's
+                                      #   12h refresh. `--force` is deprecated (no effect). Older servers (<this
+                                      #   release) still SKIP cached files without --force ("0 synced").
 servel infra reconcile my-supabase --service kong --only KONG_NGINX_WORKER_PROCESSES
                                       # Supabase Kong memory fix (hub 2026-10-08): Kong defaulted to one nginx
                                       #   worker per host CPU (~125 MiB each → 831 MiB idle on 6 cores). Templates
