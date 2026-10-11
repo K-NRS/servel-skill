@@ -168,9 +168,10 @@ The file itself requires `user-manage` to read directly via `cat`.
 ## Team authorized_keys lines (native forwarding)
 
 - sshd grants `ssh -L`/`-R` before the ForceCommand runs, so the gate never sees them. `port-forward` is enforced IN the line: active holder (role or scope) → `restrict,port-forwarding,permitopen="localhost:*",command="servel remote gate --user=X" <type> <b64> # servel-access:X`; everyone else (incl. disabled/expired) → `restrict,command=...`. servel's own pf/connect/tunnel/dev-link-infra only dial `localhost:<port>`.
-- Lines are DERIVED (`internal/access/authkeys.go` `rewrite`): every write re-renders every managed line under `authorized_keys.lock`; users/roles/scopes saves re-sync immediately; daemon re-checks every 5 min (`internal/daemon/authkeys_reconcile.go`, budget 24/24h, audit `access.authkeys_sync[_declined]`, alert `authkeys_unrepaired`).
+- Lines are DERIVED (`internal/access/authkeys.go` `rewrite`): every write re-renders every managed line under `authorized_keys.lock`; users/roles/scopes saves re-sync immediately; daemon re-checks every 5 min (`internal/daemon/authkeys_reconcile.go`, audit `access.authkeys_sync[_declined]`, alert `authkeys_unrepaired`).
 - Keys are stored canonical (type + base64, comment dropped). `ParseSSHKey` rejects multi-key input and options prefixes.
-- A line whose key ≠ the user's `ssh_fingerprint` in users.yaml is left verbatim + alerted (suspect, possible planted key) — investigate, don't "fix" it by rotating blindly.
+- A line whose key ≠ the user's `ssh_fingerprint` in users.yaml (suspect, possible planted key) or that can't be re-rendered is QUARANTINED: commented out as `# servel-quarantined <reason>: <original>` (grants nothing, kept as evidence) + alert. Investigate before restoring (delete the prefix).
+- Daemon budget (24/24h) gates only GRANTS; revocations/quarantines always apply.
 - Manual `ssh -L host:port` to a non-localhost target is refused by design; use `servel port-forward`.
 
 ## Join key (`join_key_seed`)
