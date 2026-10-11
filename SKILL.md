@@ -146,7 +146,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
-| `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. Gated users need `port-forward`; scoped (name-restricted) users can forward only to their own deployments/infra, and `~traefik`/registry are denied; their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
+| `port-forward <target>[=local] [local-port]` | SSH tunnel to a remote service. `list`, `stop`. `@infra` resolves like `exec`/`logs` (canonical `servel-infra-<name>-<type>`, legacy bare, multi-service via `@infra/svc` or `--service`; a full Swarm service name also works) in foreground, `--detach` and `-- cmd` modes; ambiguous names error with the candidates (fixed 2026-10-11). Gated users need `port-forward`; scoped (name-restricted) users can forward only to their own deployments/infra, and `~traefik`/registry are denied; their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
 | `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
 | `connect <name>` | Print infra connection details (URL, user, password). `--open` launches the web dashboard in the browser, logged in automatically for basic-auth dashboards (e.g. Supabase Studio). |
 
@@ -1370,6 +1370,8 @@ servel port-forward @db:5432 -- drizzle-kit push  # Ephemeral tunnel + run comma
 servel pf @db:5432 -- drizzle-kit push            # Short alias
 servel pf @db:5432 --env-file .env.local -- drizzle-kit push  # With env file
 servel port-forward @db:5432 --detach  # Background tunnel
+servel pf @db:5432=55432 --detach      # Local port via =<port> (or as the next arg)
+servel pf @supa/db:5432                 # One service of a multi-service infra (= --service db)
 servel port-forward list               # Show active tunnels
 servel port-forward stop <id>          # Stop tunnel
 ```
