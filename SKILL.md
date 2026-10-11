@@ -184,7 +184,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
 | `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
 | `move history` | Audit trail of past migrations (intra-swarm AND cross-remote). |
-| `volumes [list|inspect|rm]` | Docker volume management. |
+| `volumes [list|inspect|rm] [--node <host>]` | Docker volume management, per node (`--node` / worker remote reaches a swarm node's volumes). |
 | `storage status / enable / doctor` | DRBD/LINSTOR distributed storage substrate. |
 | `bench migration --target <node> --size 1GB` | Measure migration strategies head-to-head. |
 
@@ -1791,9 +1791,13 @@ Token scopes: GHCR needs `read:packages`+`write:packages` (+`delete:packages` fo
 servel volumes                        # List all volumes
 servel volumes --dangling             # Unused volumes (Links=0)
 servel volumes --orphaned             # Volumes whose owner was deleted
-servel volumes --json                 # JSON output
 servel volumes inspect <name>         # Detailed volume information
+servel volumes rm <name> [--force]    # Delete one volume (prompts without --force)
+servel volumes --node <hostname>      # Volumes are PER NODE: list/inspect/rm on that swarm node (hops via the manager)
+servel volumes -r <worker-remote>     # A worker-node remote (`remote list` shows "<swarm> (worker)") targets its own node
 ```
+
+Without `--node`, a swarm remote reads the connected MANAGER's volumes only — a volume on a worker is invisible there (not "missing"). `servel infra rm <name> --volumes` deletes on the node it runs on; when the data node is another host it refuses and prints `servel volumes rm <volume> --node <data-node>`. Flow: `servel infra rm <name> --force --yes` (data kept), then that command. `inspect` shows `Links: unknown` (never a guessed 0) when it cannot read the containers mounting a volume.
 
 ### Audit
 
