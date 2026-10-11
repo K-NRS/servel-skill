@@ -180,7 +180,7 @@ For every gated role (sessions run as root):
   - `--secret`/`--config` need `secrets-read`.
   - `--mount` is parsed as docker does (CSV, case-insensitive keys).
 - `pkill` accepts only `servel deploy.*<job>` and `servel ci server start`. `kill`/`pkill` may signal only servel deploy jobs (`kill -TERM -1` is denied).
-- A group whose leader is gone may be signalled only if a deploy job recorded it in `deploys/<job>/pid`.
+- A group whose leader is gone cannot be signalled (a pid file is writable at deploy tier, so it proves nothing).
 - Pids above 2^22 are refused, because `kill` truncates them to `pid_t`.
 
 ## Audit log
