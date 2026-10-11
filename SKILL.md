@@ -1798,7 +1798,7 @@ servel volumes --node <hostname>      # Volumes are PER NODE: list/inspect/rm on
 servel volumes -r <worker-remote>     # A worker-node remote (`remote list` shows "<swarm> (worker)") targets its own node
 ```
 
-Without `--node`, a swarm remote reads the connected MANAGER's volumes only — a volume on a worker is invisible there (not "missing"). `servel infra rm <name> --volumes` deletes on the node it runs on; when the data node is another host it refuses and prints `servel volumes rm <volume> --node <data-node>`. Flow: `servel infra rm <name> --force --yes` (data kept), then that command. `inspect` shows `Links: unknown` (never a guessed 0) when it cannot read the containers mounting a volume.
+Without `--node`, a swarm remote reads the connected MANAGER's volumes only — a volume on a worker is invisible there (not "missing"). `servel infra rm <name> --volumes` lists and deletes on the infra's recorded data node (hops from the manager to a worker; waits up to 3 min for the removed service's containers to stop). A stale copy on the manager is listed as `Copies on <manager> ... NOT deleted` and kept. Do NOT `servel ssh` + `docker volume rm` or chain `volumes rm --node` after it. `--yes` answers only "Are you sure?"; the type-the-name prompt still reads stdin: `echo <name> | servel infra rm <name> --volumes --yes`, or `--force` to skip both. Unreachable data node → refusal (`--force` drops the record, data kept). `inspect` shows `Links: unknown` (never a guessed 0) when it cannot read the containers mounting a volume.
 
 ### Audit
 
