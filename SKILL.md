@@ -1376,6 +1376,8 @@ servel port-forward list               # Show active tunnels
 servel port-forward stop <id>          # Stop tunnel
 ```
 
+Stopping a foreground `port-forward` (Ctrl+C, `kill`, closed terminal) removes the server-side proxy and exits `0`; a second Ctrl+C force-quits. A busy local port fails before anything is created on the server. Large/concurrent transfers (aws-cli multipart S3 through a forwarded minio) keep the tunnel up — data on the connection counts as liveness — so `IncompleteRead` / "SSH connection lost" mid-transfer means an outdated client: `servel --version`, upgrade.
+
 **Conflict policies:** remote-wins, local-wins, newer-wins, backup
 
 #### Linking Production Env into Dev (`--link-env` / `--link-infra`)
