@@ -612,7 +612,7 @@ servel watch <name> --follow          # Wait for deploy to start, then watch
 servel attach [name|id-prefix]        # Stream raw build.log of in-progress build (BuildKit, nixpacks, bun output with full ANSI color via PTY)
                                       # No-arg: current dir's project. Ctrl+C detaches; build keeps running. Aliases: at
                                       # Use watch for "where am I in the pipeline?", attach for "why is this failing?"
-                                      # Finished jobs (incl. --detach) keep build.log 7 days, then auto-pruned; the uploaded source is removed when the deploy exits
+                                      # Running jobs only. A finished job (incl. --detach) keeps /var/servel/deploys/<job>/build.log 7 days on the server; the upload is removed on exit
 servel rm <name>                      # Remove. If no Docker service exists for <name>, rm falls back to the stored records
                                       # and purges the orphaned generation dirs (+ their dangling Traefik routes) instead of
                                       # failing "not found". Refuses while any service still backs the name, incl. compose
