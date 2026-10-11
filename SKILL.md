@@ -146,7 +146,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
-| `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. |
+| `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. Gated users need `port-forward`; their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
 | `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
 | `connect <name>` | Print infra connection details (URL, user, password). `--open` launches the web dashboard in the browser, logged in automatically for basic-auth dashboards (e.g. Supabase Studio). |
 
