@@ -870,6 +870,15 @@ servel infra update db --version v2       # Repair a record whose stored templat
                                       #   credentials vs v1's 5, so guessing would rotate SECRET_KEY_BASE /
                                       #   VAULT_ENC_KEY / PG_META_CRYPTO_KEY / LOGFLARE_* on a stack lacking them.
                                       #   Value is validated against the type's declared versions AND must load.
+                                      # Same flag pins a record still saying "latest". `servel add` records the
+                                      #   concrete version (v2, not latest) since 2026-10-11, so a hub latest move
+                                      #   never re-renders running infra; moving versions is always --version.
+                                      #   Older "latest" records: the daemon leader pins each from evidence
+                                      #   (release dates, deploy-time template cache, live image) — record-only,
+                                      #   audit infra.version_pin. Ambiguous (e.g. supabase v1/v2 share images)
+                                      #   → left alone + infra.version_pin_declined + infra_version_unpinned alert;
+                                      #   pin by hand. Never pin to latest to "fix" it: minio v2 = RustFS, whose
+                                      #   format differs from a v1 MinIO /data volume.
 servel infra reconcile noras-openreplay --dry-run  # Re-render the hub template against the instance's STORED vars,
                                       #   diff per service vs the live Swarm specs, print added/changed/pinned/live-only.
                                       #   THE FIX for "template gained an env fix, existing instance never got it"
@@ -921,7 +930,7 @@ servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
 servel infra labels db --add key=val  # View/modify Docker labels
 servel infra run db                  # List available actions (resolved from the template version on the
-                                     # record; `latest` resolves via the server's template meta.yaml)
+                                     # record; a legacy `latest` resolves via the server's meta.yaml)
 servel infra run db psql             # Run action; `interactive: true` actions get a PTY from a terminal,
                                      # and degrade to a one-shot exec from CI/agent shells (no TTY error)
 servel infra run mysupabase deploy-functions ./supabase/functions  # Upload files + run
