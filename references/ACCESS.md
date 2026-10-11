@@ -85,6 +85,13 @@ Typical use cases:
 | Combine: deploy + restart, only on `app` deployment | `servel access scope add bob --server KN --permissions deploy,restart --deployment app` |
 | Inspect effective scope | `servel access scope show bob --json` |
 
+Resource restrictions are enforced on the command's target:
+
+- `deploy` is scoped by app name (`--name`) and environment (`--env` / `--preview`). The server re-checks the name and environment it resolves from `servel.yaml`, so a scoped deployer cannot deploy another app.
+- A name-restricted user is denied state-changing commands that name no target (an explicit target is required): `abort`, `connect`, `tunnel start`, `prune`, `node balance`, and `deploy` without `--name`.
+- `servel pf` works only for the user's own deployments/infra. Port-forward to system services (`~traefik`, registry) is denied for name-restricted users.
+- If `scopes.yaml` can't be read, access is DENIED (it used to lift all restrictions).
+
 Scopes are stored at `/var/servel/access/scopes.yaml` keyed by username.
 
 ## SSH gate path classification
@@ -136,6 +143,10 @@ The gate refuses the entire command before classification when it sees:
 
 Pipes (`|`) are allowed; each segment is classified independently and the
 required permission is the union.
+
+## Gated deploys
+
+A `deploy`-only key cannot run scripts. The server owns the background deploy job: the client sends `servel deploy ... --background-job <id>` (hidden), and `--detach` and SSH-drop survival still work. Server feature `server-owned-deploy-job`; new CLI + old server falls back automatically. An old CLI on a gated key against an upgraded server fails with `this server no longer runs scripts uploaded by the client; upgrade your servel CLI` — run `servel upgrade`. Root keys are unaffected. Credential files from gated callers must be client-written under `/var/servel/tmp/.servel-cred-*/`.
 
 ## Audit log
 
