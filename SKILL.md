@@ -253,7 +253,7 @@ TTY prints a stderr warning (piped/scripted use stays silent). Never logged. Des
 | Command | What it does |
 |---|---|
 | `auth [enable|disable|update|status|login|logout|whoami|registry]` | BasicAuth on deployments + CLI identity + Docker registry creds. |
-| `access [user|role|scope|permissions|setup|invite|join|leave|token|request|audit|request-hint]` | Multi-user team access + ACL. |
+| `access [user|role|scope|permissions|setup|invite|join|leave|token|request|audit|request-hint]` | Multi-user team access + ACL. Gate path tiers: a host path the gate has no tier for fails closed — reading its contents needs `secrets-read`, per-process `/proc/...` needs `shell-root`, `ls`/`stat`/`find` walks need `config-read` (see `references/ACCESS.md`). |
 | `ban <ip|name>` / `unban` / `ban [ls|clear|sync]` | Server-wide and per-deployment IP bans (Traefik denyip plugin). |
 | `bastion [init|install|uninstall|start|stop|restart|status|sessions|kick|session [list|play|info|commands]]` | SSH bastion with session recording. |
 | `audit [list|stats|export|rotate]` | Audit log (forensics-grade who/what/when). Carries `user` (authenticated principal) + `operator`/`operator_email` (self-declared identity from `config set user.*`); destructive commands require the latter. |
