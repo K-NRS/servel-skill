@@ -90,6 +90,30 @@ Resource restrictions are enforced on the command's target:
 - `deploy` is scoped by app name (`--name`) and environment (`--env` / `--preview`). The server re-checks the name and environment it resolves from `servel.yaml`, so a scoped deployer cannot deploy another app.
 - A name-restricted user is denied state-changing commands that name no target (an explicit target is required): `abort`, `connect`, `tunnel start`, `prune`, `node balance`, and `deploy` without `--name`.
 - `servel pf` works only for the user's own deployments/infra. Port-forward to system services (`~traefik`, registry) is denied for name-restricted users.
+- `~system` targets are read-only for name-restricted users: `logs ~traefik` and `inspect ~traefik` are OK; `exec`, `restart`, `scale` and `rm` on `~x` are denied.
+- EVERY resource a command names is checked: both apps of `env copy`/`secrets copy`/`rename`, the app (2nd arg) of `domains remove <domain> <app>`, each infra of `link a,b` (bare names = infra), the name in `add <type> <name>`. Words a command doesn't take as a resource are refused: `servel infra link app db` is just `servel infra` (a listing; there is no `infra link`), so it is denied. To link, run `servel link <infra>` from the app dir.
+- Raw commands the client sends are mapped to resources and denied when they touch another resource or can't be mapped:
+  - `docker service|container …` operands, through the service's `servel.infra.name` label or deployment service name;
+  - `/var/servel/{deployments/<id>,infrastructure/<name>,operation-logs/<name>,tmp/<app>-<pid>,deploys/<app>-<pid>}`;
+  - `kill`/`pkill` of another app's deploy job;
+  - `xargs` fed by anything but `docker service ps <own svc> -q`;
+  - volume, image and system prunes;
+  - `--network-add` and `traefik.*`/`servel.*` labels (except router `…middlewares` and `servel.managed`).
+- Also checked:
+  - `add --name` (it wins over the positional);
+  - `exec --target`;
+  - the linked apps of `--with-linked`;
+  - `remote subdomain-claim --deployment`;
+  - deploy `--linked-infra-network servel-infra-<x>-network` (that is `@x`).
+- After `infra <sub>`, a bare name is an INFRA (`infra stop app` checks `@app`).
+- Restricted users are refused cluster secrets at any tier (`secrets/master.key`, `letsencrypt/acme.json`, `deploy-keys/`, `backup-password`).
+- State-changing commands tiered `config-read` (`remote cleanup`, `logs prune`, `audit rotate`, …) need a target.
+- A router `…middlewares` label must name a router the user's own service already defines.
+- Only dangling `docker image prune` is allowed.
+- Environment-only scopes are checked on raw commands too, and refused what can't be mapped.
+- Listing every deployment's `meta.json` (ps-level) stays OK. Walking every `spec.json` does not.
+- Consequence: views that inspect ALL services (`domains list`, `verify`, `dev`, the per-node CPU line of `remote status`) fail for name-restricted users. Service specs carry every app's secrets as env.
+- Unrestricted scopes (no names) see no change.
 - If `scopes.yaml` can't be read, access is DENIED (it used to lift all restrictions).
 
 Scopes are stored at `/var/servel/access/scopes.yaml` keyed by username.
@@ -146,7 +170,18 @@ required permission is the union.
 
 ## Gated deploys
 
-A `deploy`-only key cannot run scripts. The server owns the background deploy job: the client sends `servel deploy ... --background-job <id>` (hidden), and `--detach` and SSH-drop survival still work. Server feature `server-owned-deploy-job`; new CLI + old server falls back automatically. An old CLI on a gated key against an upgraded server fails with `this server no longer runs scripts uploaded by the client; upgrade your servel CLI` — run `servel upgrade`. Root keys are unaffected. Credential files from gated callers must be client-written under `/var/servel/tmp/.servel-cred-*/`.
+A `deploy`-only key cannot run scripts. The server owns the background deploy job: the client sends `servel deploy ... --background-job <id>` (hidden), and `--detach` and SSH-drop survival still work. Server feature `server-owned-deploy-job`; new CLI + old server falls back automatically. An old CLI on a gated key against an upgraded server fails with `this server no longer runs scripts uploaded by the client; upgrade your servel CLI` — run `servel upgrade`. Root keys are unaffected. Credential files from gated callers must be client-written under `/var/servel/tmp/.servel-cred-*/`. Reading one back through the gate needs `secrets-read` (all roles); writing stays `deploy`.
+
+For every gated role (sessions run as root):
+- `docker service create|update` options are vetted like `docker run`:
+  - a bind mount outside `/var/servel` or from deploy scratch, `volume-driver`/`volume-opt`, `--network host`, `--cap-add`, `--env-file`, or any unknown option or mount field needs `shell-root`;
+  - a `/var/servel` bind needs `config-write` plus that region's write tier;
+  - `--publish` needs `config-write`;
+  - `--secret`/`--config` need `secrets-read`.
+  - `--mount` is parsed as docker does (CSV, case-insensitive keys).
+- `pkill` accepts only `servel deploy.*<job>` and `servel ci server start`. `kill`/`pkill` may signal only servel deploy jobs (`kill -TERM -1` is denied).
+- A group whose leader is gone cannot be signalled (a pid file is writable at deploy tier, so it proves nothing).
+- Pids above 2^22 are refused, because `kill` truncates them to `pid_t`.
 
 ## Audit log
 

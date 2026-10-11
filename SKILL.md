@@ -146,7 +146,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
-| `port-forward <target> [local-port]` | SSH tunnel to a remote service. `list`, `stop`. Gated users need `port-forward`; scoped (name-restricted) users can forward only to their own deployments/infra, and `~traefik`/registry are denied; their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
+| `port-forward <target>[=local] [local-port]` | SSH tunnel to a remote service. `list`, `stop`. `@infra` resolves like `exec`/`logs` (canonical `servel-infra-<name>-<type>`, legacy bare, multi-service via `@infra/svc` or `--service`; a full Swarm service name also works) in foreground, `--detach` and `-- cmd` modes; ambiguous names error with the candidates (fixed 2026-10-11). Gated users need `port-forward`; scoped (name-restricted) users can forward only to their own deployments/infra, and `~traefik`/registry are denied (they may read `~x` via logs/inspect, never exec/restart/scale it; every operand of a command is scope-checked, raw docker/path commands included — see [ACCESS.md](references/ACCESS.md#scope-model)); their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
 | `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
 | `connect <name>` | Print infra connection details (URL, user, password). `--open` launches the web dashboard in the browser, logged in automatically for basic-auth dashboards (e.g. Supabase Studio). |
 
@@ -184,7 +184,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
 | `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
 | `move history` | Audit trail of past migrations (intra-swarm AND cross-remote). |
-| `volumes [list|inspect|rm]` | Docker volume management. |
+| `volumes [list|inspect|rm] [--node <host>]` | Docker volume management, per node (`--node` / worker remote reaches a swarm node's volumes). |
 | `storage status / enable / doctor` | DRBD/LINSTOR distributed storage substrate. |
 | `bench migration --target <node> --size 1GB` | Measure migration strategies head-to-head. |
 
@@ -803,7 +803,7 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | Analytics | plausible, umami, openreplay, highlight |
 | Monitoring | prometheus, grafana, loki, promtail, uptimekuma, gatus, peekaping |
 | Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
-| Storage | minio |
+| Storage | minio (v2 default = RustFS engine: S3 `:9000`, `MINIO_ROOT_*` creds, no console; v1 MinIO image retired) |
 | Email | posteio |
 | CI | woodpecker, woodpecker-agent |
 | Blockchain | bitcoin, ipfs, lnd |
@@ -1370,6 +1370,8 @@ servel port-forward @db:5432 -- drizzle-kit push  # Ephemeral tunnel + run comma
 servel pf @db:5432 -- drizzle-kit push            # Short alias
 servel pf @db:5432 --env-file .env.local -- drizzle-kit push  # With env file
 servel port-forward @db:5432 --detach  # Background tunnel
+servel pf @db:5432=55432 --detach      # Local port via =<port> (or as the next arg)
+servel pf @supa/db:5432                 # One service of a multi-service infra (= --service db)
 servel port-forward list               # Show active tunnels
 servel port-forward stop <id>          # Stop tunnel
 ```
@@ -1655,7 +1657,9 @@ servel ps    # (in project dir) → auto-joins if approved, then runs
 
     Every secret read is audited as `spec.secrets.read`, by key name only. A new kind must check access itself with `query.RequireAccess(target, env, perms...)` and be added to `TestQueryKindsAreReviewedForTheAccessGate`.
   - **Breaking.** An old CLI on a gated key gets `reads deployment or infra secrets … upgrade your servel CLI`; fix it with `servel upgrade`. Developers now see `env list` keys only, because values need `deploy`. Viewers see no env values.
+- **Gated deploys are confined to their app (no `shell-root`, includes `admin`):** the server refuses the upload's own config when it reaches the host. Refused: bind mounts that are not a direct child of `/var/servel/data/<app>/` (use flat `persist:` paths; not `/abs:`, compose `./data:` binds or nested `./a/b`); another app's or infra's named volume, or an existing unmounted one; a compose service whose name belongs to another app; `network_mode: host`, tag networks and other apps' networks; multi-env compose `traefik.*`/`servel.*` labels (use `routes:`) and explicit external ports; compose `privileged`, `cap_add`, `devices`, `security_opt`, `volumes_from`, `cgroup_parent`, or `network_mode/pid/ipc/uts/userns_mode/cgroup: host|service:|container:`; upload symlinks resolving outside it, hard links, devices/FIFOs; build context, Dockerfile or `env_file` outside the upload. Mounts already on the live service are kept, so an operator adds e.g. a `docker.sock` mount as root and gated redeploys keep it. Linking infra (`infra:` / `--link-infra`) needs the scope to name `@infra`. The error names every refused option and says "needs the shell-root permission".
 - **Write tiers (since `fc65704c`):** a gated write into `/var/servel/access/` needs `user-manage`, so only super_admin can make it. A write into the secret stores needs `secrets-write`. A write to `/proc/<pid>/`, `~/.curlrc`, `~/.config/curlrc` or `~/.netrc` needs `shell-root`. A directory operand counts its whole tree. `xargs` writers need every tier, so never pipe names into `xargs rm`; use `find … -exec grep -q … {} \; -delete`. `tar -P` is refused. `tar -c` needs its members' read tier. `curl` with a `file://` URL or unparsed options (`-T`, `-d @f`, `-F k=@f`) needs `secrets-read`. Pin new client write shapes with `gatetest.MissingForRole(t, "admin", cmd)`.
+- **Docker service host access (since `34bcb01b`):** `docker service create/update` needs `update`, and `shell-root` when the service can reach the host: a bind mount, the host network (any case, or by ID), `--cap-add`, or `--env-file`. `--mount` values are parsed like docker (CSV, keys in any case) and may use only `type`, `source`/`src`, `target`/`dst`/`destination`, `readonly`/`ro`, each once; `volume-opt`, `volume-driver`, `bind-propagation` and any other key need `shell-root`. Named volumes and tmpfs stay in the container. The only bind below `shell-root` is servel's own Traefik mount of `/var/servel/traefik/dynamic` or `/var/servel/logs/traefik` (`config-write`), so `remote update-traefik` and the access-log mount repair are admin-only. `--secret`/`--secret-add` need `secrets-read`. `docker run --mount` uses the same parser. A container-starting docker command fed by `xargs` or `find -exec {}`, or holding an unquoted `*?[{`, needs `shell-root`, so quote glob or brace characters in client-built values. Gated `servel dev` bind-mounts its code dir, so it needs `shell-root` too. New client builders must emit only those mount keys.
 - **Deleting a user removes every trace** (since `e08ba2ff`): `servel access user delete <u>` and `servel access leave` revoke the SSH key, delete the scopes, cancel pending requests, revoke unexpired approved grants, then delete the record (`access.DeleteUserCascade`). Older clients left scopes and requests behind, and a new user with the same name inherited them. To clean up such residue, run `servel access user delete <u>` again (it works when the record is already gone), or `servel access scope remove <u> --server <s>`, which also works for a deleted user.
 - Every `access/users.yaml` change goes through `Store.UpdateUsers`, which holds the flock `access/users.lock`. Never pair `LoadUsers` and `SaveUsers` yourself: concurrent writers dropped each other's changes, and a login record could undo `access user disable`. The gate writes `last_login`/`login_count` at most once a minute per user, so `login_count` counts recorded logins, not commands.
 
@@ -1820,9 +1824,13 @@ Token scopes: GHCR needs `read:packages`+`write:packages` (+`delete:packages` fo
 servel volumes                        # List all volumes
 servel volumes --dangling             # Unused volumes (Links=0)
 servel volumes --orphaned             # Volumes whose owner was deleted
-servel volumes --json                 # JSON output
 servel volumes inspect <name>         # Detailed volume information
+servel volumes rm <name> [--force]    # Delete one volume (prompts without --force)
+servel volumes --node <hostname>      # Volumes are PER NODE: list/inspect/rm on that swarm node (hops via the manager)
+servel volumes -r <worker-remote>     # A worker-node remote (`remote list` shows "<swarm> (worker)") targets its own node
 ```
+
+Without `--node`, a swarm remote reads the connected MANAGER's volumes only — a volume on a worker is invisible there (not "missing"). `servel infra rm <name> --volumes` lists and deletes on the infra's recorded data node (hops from the manager to a worker; waits up to 3 min for the removed service's containers to stop). A stale copy on the manager is listed as `Copies on <manager> ... NOT deleted` and kept. Do NOT `servel ssh` + `docker volume rm` or chain `volumes rm --node` after it. `--yes` answers only "Are you sure?"; the type-the-name prompt still reads stdin: `echo <name> | servel infra rm <name> --volumes --yes`, or `--force` to skip both. Unreachable data node → refusal (`--force` drops the record, data kept). `inspect` shows `Links: unknown` (never a guessed 0) when it cannot read the containers mounting a volume.
 
 ### Audit
 
