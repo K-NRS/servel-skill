@@ -513,7 +513,7 @@ servel deploy --remote staging-srv # Deploy to non-default server
 - After running `servel remote use <name>` to set a default
 - Commands that already specify the server (e.g., `servel ssh KN`)
 
-**Tip:** Use `servel remote list` to see available remotes, `servel remote use <name>` to change default.
+**Tip:** Use `servel remote list` to see available remotes, `servel remote use <name>` to change default. `servel remote list --json` keeps each remote's last-known `domain` even when its probe fails (`status: offline`), so scripts can map a domain to `user@host` without a live connection.
 
 ### ⚠️ Remotes that name a swarm WORKER node
 
