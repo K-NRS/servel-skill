@@ -1584,6 +1584,12 @@ servel access scope add bob --server KN --permissions deploy,logs --infra mydb -
 servel access scope show bob --json   # Verify effective scopes
 # Scope perms are ADDITIVE (extend role; never subtract). Fixes "your role X lacks Y permission"
 # without changing the user's global role. --permissions + --infra + --deployment + --env compose.
+# --infra/--deployment NAME-scope the user, and that covers raw commands too. A scoped user's
+# `cat /var/servel/infrastructure/<other>/…`, `docker service inspect|logs|update <other svc>`,
+# globs/find/xargs over every app's state, and kill/pkill outside its own deploy jobs are refused
+# ("not in your access scope"). Exception: `find /var/servel/deployments -maxdepth 2 -name meta.json`.
+# Unmappable objects (~traefik, task IDs via xargs) are allowed only with a label-free --format.
+# Don't advise raw reads of another app's state for a scoped user; use the user's own @infra/app.
 servel access role                    # Role management
 servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
