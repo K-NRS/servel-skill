@@ -106,10 +106,21 @@ then matched against the user's effective permissions.
 | `/var/servel/config.yaml` | `config-read` |
 | `/var/servel/traefik/**`, `routes/**`, `middlewares/**` | `config-read` |
 | `/var/servel/**` (deployments, infra, metrics, archives, ci, cluster, tmp, ports) | `status` |
-| anything else | `config-read` (stricter than status) |
+| system-wide `/proc` files (`meminfo`, `loadavg`, `drbd`, ...), `/proc/sys/`, `/proc/pressure/`, `/sys/` | `status` |
+| `/etc/docker/daemon.json`, `/etc/os-release`, `/etc/ssh/ssh_host_*_key.pub`, `*/.ssh/authorized_keys` | `status` |
+| `/etc/ssh/sshd_config`, `/etc/fstab`, `/etc/exports`, `~/.ssh/id_{ed25519,rsa}.pub` | `config-read` |
+| any other `/proc/...` (`/proc/<pid>/root`, `/proc/self/...`, `environ`) | `shell-root` |
+| anything else (`/etc/shadow`, `ssh_host_*_key`, `*/.ssh/id_*`, `/var/lib/docker/**`, relative paths) | `secrets-read` |
 
-Unknown paths default to `config-read` rather than the loosest tier — fail
-closed.
+Unknown paths fail closed (since 2026-10-11; before, they read at
+`config-read`, so a `developer` key could `cat /etc/shadow` or
+`/proc/self/root/var/servel/secrets/master.key`). Host files are allowlisted
+by exact path only. `ls`, `stat` and a `find` walk see names and sizes, not
+contents, so on an unknown path they need `config-read`; `find -exec cat {}`
+still needs `secrets-read`. `du` is `status` on any path. A gated script
+that reads a host file outside the table needs a role with `secrets-read`
+(admin) — or add the exact path to the gate's allowlist in
+`internal/access/gate/gate.go` `classifyPathSensitivity`.
 
 ## Refusals (gate-level)
 
