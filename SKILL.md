@@ -803,7 +803,7 @@ Usage: `servel deploy preview`, `servel deploy quick`
 | Analytics | plausible, umami, openreplay, highlight |
 | Monitoring | prometheus, grafana, loki, promtail, uptimekuma, gatus, peekaping |
 | Realtime | livekit, livekit-egress, hocuspocus, y-sweet |
-| Storage | minio |
+| Storage | minio (v2 default = RustFS engine: S3 `:9000`, `MINIO_ROOT_*` creds, no console; v1 MinIO image retired) |
 | Email | posteio |
 | CI | woodpecker, woodpecker-agent |
 | Blockchain | bitcoin, ipfs, lnd |
