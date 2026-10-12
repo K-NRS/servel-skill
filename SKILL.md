@@ -124,7 +124,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 |---|---|
 | `ps` / `ls` / `list` | List deployments (`--all-servers`, `--tree`, `--all`). |
 | `inspect` / `info` | Full deployment detail (image, replicas, health, command). |
-| `logs <addr> [-f]` | Logs for deployment / `@infra` / `~system`. Per-task streaming since 2026-04-13. |
+| `logs <addr> [-f]` | Logs for deployment / `@infra` / `~system`. Per-task streaming since 2026-04-13. Team members (gated users) need only the `logs` permission since the 2026-10-12 release: the CLI asks the server to run `servel logs view` itself (advertised via the `server.features` query kind); an older server falls back to the old shell pipeline, which the gate leaves to shell-root. |
 | `events` | Deployment events timeline. |
 | `history` / `versions` | Past deploys + available images. |
 | `find <name>` | Cross-server search (works for `@infra` too). |
