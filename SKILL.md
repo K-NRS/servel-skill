@@ -1585,6 +1585,8 @@ servel auth disable <name>            # Disable basic auth
 servel access user                    # User management
 servel access user create bob --role viewer --ssh-key key.pub  # Add user; key file, inline key, or - (stdin), read on your machine
 servel access user create bob --role viewer --generate-key     # Generate keypair for user
+servel access user modify bob --ssh-key new.pub                # Rotate key; file, inline, or - read on your machine
+servel access user modify bob --rotate-key                     # Rotate key via prompt (runs on your machine)
 servel access scope add bob --server KN --permissions deploy  # Grant extra perms on one server
 servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployment app
 servel access scope show bob --json   # Verify effective scopes
