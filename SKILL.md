@@ -1583,8 +1583,8 @@ servel auth whoami                    # Current user info
 servel auth enable <name>             # Enable basic auth
 servel auth disable <name>            # Disable basic auth
 servel access user                    # User management
-servel access user create --name bob --ssh-key key.pub  # Add user with key
-servel access user create --name bob --generate-key     # Generate keypair for user
+servel access user create bob --role viewer --ssh-key key.pub  # Add user; key file, inline key, or - (stdin), read on your machine
+servel access user create bob --role viewer --generate-key     # Generate keypair for user
 servel access scope add bob --server KN --permissions deploy  # Grant extra perms on one server
 servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployment app
 servel access scope show bob --json   # Verify effective scopes
