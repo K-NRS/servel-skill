@@ -1359,7 +1359,8 @@ servel verify resources               # Check resource availability; no local/em
 ```bash
 servel dev                            # Start dev session
 servel dev --team                     # Bidirectional sync (collaboration)
-servel dev --port 3001                # Custom port
+servel dev --port 3001                # Custom port (declared port = TCP health-probed after 10m grace)
+servel dev --cpu 4 --memory 12GB      # Sandbox limits (default 1 CPU / 6GB; yaml: dev.resources.{cpus,memory})
 servel dev --domain staging.app.com   # Custom domain
 servel dev --no-sync                  # One-time upload only
 servel dev --conflict-policy newer-wins # Sync conflict resolution
@@ -1370,7 +1371,8 @@ servel dev --link-env myapp-prod --only DATABASE_URL,REDIS_URL  # Whitelist filt
 servel dev --link-env myapp-prod --exclude SENTRY_DSN           # Blacklist filter
 servel dev --link-infra @postgres --no-tunnel  # Disable auto-tunnel (warns per internal host)
 servel dev list                       # Active sessions
-servel dev logs <id> -f               # Follow session logs
+servel dev logs <id>                  # Last 100 lines (+ how it ended, if stopped)
+servel dev logs <id> -f               # Stream until the command exits; exits with its status
 servel dev stop <id>                  # Stop session
 servel tunnel                         # Expose localhost publicly
 servel tunnel start <port>            # Start tunnel on port
@@ -1390,6 +1392,8 @@ servel port-forward stop <id>          # Stop tunnel
 Stopping a foreground `port-forward` (Ctrl+C, `kill`, closed terminal) removes the server-side proxy and exits `0`; a second Ctrl+C force-quits. A busy local port fails before anything is created on the server. Large/concurrent transfers (aws-cli multipart S3 through a forwarded minio) keep the tunnel up — data on the connection counts as liveness — so `IncompleteRead` / "SSH connection lost" mid-transfer means an outdated client: `servel --version`, upgrade.
 
 **Conflict policies:** remote-wins, local-wins, newer-wins, backup
+
+**One-shot commands in a sandbox (test suites, migrations).** A sandbox sits on the servel network, so it reaches `servel-infra-<name>-<svc>` directly — no `--link-infra`, no port-forward. Put the command in `dev.command` (no `&&`; wrap it in a script), then `servel dev start --new --no-sync --no-public-url --yes`, `servel dev logs <id> -f` (streams stdout+stderr, exits with the command's status), and `servel dev stop <id> --force`. Don't stream through `servel exec` and don't add a listener for the healthcheck: only a declared port (`--port`/`dev.port`) is probed. Dockerfile-built sandbox images are keyed on the Dockerfile and every uploaded file, so no cache-busting in the session name. A failing command is restarted by swarm (on-failure, 3 attempts); `logs -f` still returns the first run's status, and `dev stop` ends the retries. Ship `python3 make g++` (and `npm` if the root has no lockfile) in the image, or the entrypoint apt-installs them on every start (minutes).
 
 #### Linking Production Env into Dev (`--link-env` / `--link-infra`)
 
