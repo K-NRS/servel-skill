@@ -67,6 +67,7 @@ Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-no
 | Manual `iptables -A INPUT -s X -j DROP` | `servel ban <ip>` |
 | Per-app IP blocking via raw Traefik labels | `servel ban <name> <ip>` |
 | Manual `rsync` of Docker volumes between nodes | `servel move @<infra> --to <node> --fast` |
+| A repo with no GitHub/GitLab CI, or tests/builds that must run on the server | Built-in CI: `servel ci pipeline-init` (writes `.servel-ci.yml`) → `servel ci run` (runs on the server over SSH); `servel ci pipelines add` + `servel ci webhook <p>` for push-triggered runs. External CI instead: `servel ci setup github-actions` |
 | `docker service update --constraint-add node.hostname==` for stateful | `servel move @<infra> --to <node>` (moves data too) |
 | Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
 | Eyeballing benchmarks to guess if the fast path is actually fast at your data size | `servel bench migration --target <node> --size 1GB` (deploys ephemeral postgres, measures both strategies, prints comparison table) |
@@ -178,7 +179,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Data / state / volumes / migration
 | Command | What it does |
 |---|---|
-| `data bind / unbind / heal / migrate / status / check / volumes` | Per-service data binding (which node holds the data). |
+| `data bind / unbind / heal / migrate / status / check` | Per-service data binding (which node holds the data). `data volumes` (move/share/replicate/shard) was REMOVED 2026-10 — use `servel move` / `infra add --replicated`. |
 | `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. |
 | `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. |
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
