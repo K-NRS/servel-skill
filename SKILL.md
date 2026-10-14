@@ -1583,17 +1583,25 @@ servel auth logout                    # Logout
 servel auth whoami                    # Current user info
 servel auth enable <name>             # Enable basic auth
 servel auth disable <name>            # Disable basic auth
-servel access user                    # User management
+servel user                           # List users (everyday verbs: ls show add edit revoke modify disable enable rename rm)
+servel user show bob                  # EFFECTIVE access as the gate enforces it: level, reachable projects, scope rows, warnings
+servel user edit bob                  # Change project access: TUI on a terminal; flags = `access scope add`
+servel user revoke bob --server KN    # Remove one scope row (= access scope remove)
+# `servel user <verb>` runs the `servel access user|scope` command it mirrors (same flags, same server command);
+# the access forms still work for scripts but are hidden from help.
 servel access user create bob --role viewer --ssh-key key.pub  # Add user; key file, inline key, or - (stdin), read on your machine
 servel access user create bob --role viewer --generate-key     # Generate keypair for user
 # create writes the record and its authorized_keys line together: a key another user holds fails the whole create, no record left (ac8dfc0c)
 servel access user modify bob --ssh-key new.pub                # Rotate key; file, inline, or - read on your machine
 servel access user modify bob --rotate-key                     # Rotate key via prompt (runs on your machine)
-servel access scope add bob --server KN --permissions deploy  # Grant extra perms on one server
+servel access scope add bob --server KN --permissions deploy  # Grant extra perms (row labelled KN)
 servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployment app
-servel access scope show bob --json   # Verify effective scopes
+servel user show bob --json           # Verify: what bob ACTUALLY reaches (not just the stored rows)
 # Scope perms are ADDITIVE (extend role; never subtract). Fixes "your role X lacks Y permission"
-# without changing the user's global role. --permissions + --infra + --deployment + --env compose.
+# without changing the user's global role. TRAP: all of a user's rows on a server apply TOGETHER —
+# the --server label does not confine a row; any row's perms apply to every reachable project; ONE row
+# with no --infra/--deployment/--env opens every project (e.g. a stale row named after an old server
+# name). `servel user show` flags each case; fix by `servel user revoke <user> --server <stale-label>`. --permissions + --infra + --deployment + --env compose.
 # --infra/--deployment NAME-scope the user, and that covers raw commands too. A scoped user's
 # `cat /var/servel/infrastructure/<other>/…`, `docker service inspect|logs|update <other svc>`,
 # globs/find/xargs over every app's state, and kill/pkill outside its own deploy jobs are refused
@@ -1615,6 +1623,7 @@ servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-id
 # Switch identity = switch --remote. Default identity = the remote named by default_remote in ~/.servel/config.yaml.
 servel access leave                   # Leave a server you joined
 servel access request                 # In project dir: public request or check approval status (state.json w/ join_key_seed → no prior access needed; access.yaml → join)
+servel user request --reason "..."    # In a project dir (.servel/state.json): request access to THAT project; any role can file (typed access.request kind; older servers refused non-user-manage users)
 servel access request create [srv] --reason "..." --duration 2h  # Request JIT access
 servel access request create --deployments app --infra mydb      # Custom scope
 servel access request list --status pending  # List access requests (shows SCOPE column)
@@ -2515,7 +2524,7 @@ environments:
 | `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
 | `<svc>: no running tasks` on Supabase analytics/realtime/supavisor | Memory limit too low. Bump per-service: `servel infra update <name> --memory <svc>:1G`. NEVER drop Erlang services below 512MB. |
 | Supabase `/realtime/v1/*` → 503 `{"message":"name resolution failed"}` (REST/Auth fine) | Kong's bundled kong.yml hardcodes the realtime upstream `realtime-dev.supabase-realtime:4000` (a Compose `container_name` trick). **Docker Swarm overlay DNS does NOT resolve aliases containing dots** (proven: NXDOMAIN even when the alias is registered on the service spec), so `network_alias_overrides` is a silent no-op — the only fix is `source_substitutions` rewriting kong.yml → bare `realtime`. Template (v1+v2) carries it; if a running stack predates distribution, live-fix in the kong container: `sed -i 's/realtime-dev.supabase-realtime/realtime/g' /home/kong/kong.yml && kong reload` (graceful) and patch the bind source `/var/servel/infrastructure/<infra>/volumes/api/kong.yml` so it survives a kong restart. NB: kong key-auth returns 401 before proxying, so reproduce the 503 with `-H "apikey: <ANON>"`. |
-| `access denied: command requires X permission` | Either change role, or extend scope: `servel access scope add <user> --server <s> --permissions X`. |
+| `access denied: command requires X permission` | Either change role, or extend scope: `servel user edit <user> --server <s> --permissions X`. Check with `servel user show <user>`. |
 | `--var <Name>` rejected / value not picked up | `--var` uses Go-identifier names (`^[A-Za-z_][A-Za-z0-9_]*$`). List canonical names with `servel infra vars <type>`. |
 
 **Diagnostic commands:**
