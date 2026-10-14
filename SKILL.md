@@ -1623,6 +1623,7 @@ servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-id
 # Switch identity = switch --remote. Default identity = the remote named by default_remote in ~/.servel/config.yaml.
 servel access leave                   # Leave a server you joined
 servel access request                 # In project dir: public request or check approval status (state.json w/ join_key_seed → no prior access needed; access.yaml → join)
+servel user request --reason "..."    # In a project dir (.servel/state.json): request access to THAT project; any role can file (typed access.request kind; older servers refused non-user-manage users)
 servel access request create [srv] --reason "..." --duration 2h  # Request JIT access
 servel access request create --deployments app --infra mydb      # Custom scope
 servel access request list --status pending  # List access requests (shows SCOPE column)
