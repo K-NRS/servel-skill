@@ -1376,6 +1376,7 @@ servel dev --link-infra @postgres --no-tunnel  # Disable auto-tunnel (warns per 
 servel dev list                       # Active sessions
 servel dev logs <id>                  # Last 100 lines (+ how it ended, if stopped)
 servel dev logs <id> -f               # Stream until the command exits; exits with its status
+servel dev start                      # Again over a STOPPED session: restarts it in place if unchanged (deps kept), else recreates it under the same ID; --new = fresh session
 servel dev stop <id>                  # Stop session
 servel tunnel                         # Expose localhost publicly
 servel tunnel start <port>            # Start tunnel on port
