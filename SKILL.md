@@ -1621,7 +1621,7 @@ servel access invite ls               # List pending invites
 servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
-servel join 203.0.113.7               # Key already registered by an admin: join by IP/domain/any DNS name → saves remote (user root, key = identity), prints your access. NOT `remote add` (wrong user + provisions). Cloudflare-proxied names can't carry SSH (error says so)
+servel join 203.0.113.7               # Key already registered by an admin: join by IP/domain/any DNS name → saves remote (user root, key = identity), prints your access. NOT `remote add` (wrong user + provisions). Cloudflare-proxied domain → join dials DNS-only `ssh.<domain>` (published by `servel user add` with the local CF token; user add prints the exact join address)
 servel access join <token>            # Join server (idempotent -- safe for CI reruns)
 servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-identity local testing)
 # Identity = one remote per key. Same host + different key → new remote (dedupe is by host+key, not host alone).
