@@ -64,6 +64,7 @@ Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-no
 | Manual backups / `pg_dump` | `servel infra backup <name>` |
 | `docker exec psql < file.sql` | `servel infra sql @mydb file.sql` |
 | Raw `curl` health checks | `servel verify health <name>` |
+| "App is up but its backend/DB/Supabase seems broken", curling an app's API URL by hand | `servel deps <app>` — finds deps from env URLs + links, probes Traefik→backend over the overlay (catches stale-FDB hangs Docker calls healthy); exits 1 on down/unreachable |
 | Manual `iptables -A INPUT -s X -j DROP` | `servel ban <ip>` |
 | Per-app IP blocking via raw Traefik labels | `servel ban <name> <ip>` |
 | Manual `rsync` of Docker volumes between nodes | `servel move @<infra> --to <node> --fast` |
@@ -1006,7 +1007,8 @@ servel infra sql @mydb ./migrations --force      # Re-apply changed migrations
 servel infra sql @mydb ./migrations --baseline   # Adopt tracking on a DB whose schema already exists (records files without executing them)
 servel link db                        # Link (from app's project dir) -> saved to servel.yaml, injects DATABASE_URL on next deploy
 servel unlink db                      # Unlink (persisted to servel.yaml)
-servel deps myapp                     # Show dependencies
+servel deps myapp                     # Live health of the app + every dep found in env URLs (CONVEX_URL, DATABASE_URL...), links, requires;
+                                      #   Traefik->backend overlay probe, task counts, TCP connect for externals; exit 1 on down/unreachable/not_found
 servel connect db                     # Quick connect to infra
 servel connect mysupabase --open      # Open dashboard in browser, auto-logged-in (basic-auth dashboards)
 ```
