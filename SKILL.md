@@ -1655,7 +1655,7 @@ servel access invite ls               # List pending invites
 servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
-servel join 203.0.113.7               # Key already registered by an admin: join by IP/domain/any DNS name → saves remote (user root, key = identity), prints your access + a per-permission "What you can do" command list with your project names. NOT `remote add` (wrong user + provisions). Cloudflare-proxied domain can't carry SSH → join refuses it, use the IP (`servel user add` prints the exact join address). Do NOT publish a DNS-only ssh.<domain>: it exposes the origin IP behind proxied apps
+servel join 203.0.113.7               # Key already registered by an admin: join by IP/domain/any DNS name → saves remote (user root, key = identity), prints your access + a per-permission "What you can do" command list with your project names. NOT `remote add` (wrong user + provisions). Cloudflare-proxied domain → join asks https://<domain>/.well-known/servel/join with a key-signed request; registered keys get IP+port+host keys (pinned), others 404. Off per server: `servel daemon config set join_lookup_enabled false` (then join by IP). Do NOT publish a DNS-only ssh.<domain>
 servel access join <token>            # Join server (idempotent -- safe for CI reruns)
 servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-identity local testing)
 # Identity = one remote per key. Same host + different key → new remote (dedupe is by host+key, not host alone).
