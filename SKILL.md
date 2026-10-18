@@ -1635,7 +1635,9 @@ servel auth disable <name>            # Disable basic auth
 servel user                           # List users (everyday verbs: ls show add edit revoke modify disable enable rename rm)
 servel user show bob                  # EVERY server in config: level, projects, abilities per server ("no account" where absent)
 servel user show bob -r KN            # one server in full: EFFECTIVE access as the gate enforces it, scope rows, warnings
-servel user edit bob                  # Change project access: TUI on a terminal; flags = `access scope add`
+servel user edit bob                  # Interactive screen: projects, envs, extra perms (role perms locked); flags REPLACE the row (= `access scope add`)
+servel user grant bob --perm deploy   # Add a permission on top of the role, keeps the row's projects (refuses role perms)
+servel user revoke bob --perm deploy  # Take it back; a role perm points to `servel user modify --role`
 servel user revoke bob --server KN    # Remove one scope row (= access scope remove)
 # `servel user <verb>` runs the `servel access user|scope` command it mirrors (same flags, same server command);
 # the access forms still work for scripts but are hidden from help.
@@ -2579,7 +2581,7 @@ environments:
 | `service db not found: no services found` after deploy | Hook ran before ServiceIDs persisted. Re-run: `servel infra run-hooks <name> --init --force`. |
 | `<svc>: no running tasks` on Supabase analytics/realtime/supavisor | Memory limit too low. Bump per-service: `servel infra update <name> --memory <svc>:1G`. NEVER drop Erlang services below 512MB. |
 | Supabase `/realtime/v1/*` → 503 `{"message":"name resolution failed"}` (REST/Auth fine) | Kong's bundled kong.yml hardcodes the realtime upstream `realtime-dev.supabase-realtime:4000` (a Compose `container_name` trick). **Docker Swarm overlay DNS does NOT resolve aliases containing dots** (proven: NXDOMAIN even when the alias is registered on the service spec), so `network_alias_overrides` is a silent no-op — the only fix is `source_substitutions` rewriting kong.yml → bare `realtime`. Template (v1+v2) carries it; if a running stack predates distribution, live-fix in the kong container: `sed -i 's/realtime-dev.supabase-realtime/realtime/g' /home/kong/kong.yml && kong reload` (graceful) and patch the bind source `/var/servel/infrastructure/<infra>/volumes/api/kong.yml` so it survives a kong restart. NB: kong key-auth returns 401 before proxying, so reproduce the 503 with `-H "apikey: <ANON>"`. |
-| `access denied: command requires X permission` | Either change role, or extend scope: `servel user edit <user> --server <s> --permissions X`. Check with `servel user show <user>`. |
+| `access denied: command requires X permission` | Either change role, or extend scope: `servel user grant <user> --perm X`. Check with `servel user show <user>`. |
 | `--var <Name>` rejected / value not picked up | `--var` uses Go-identifier names (`^[A-Za-z_][A-Za-z0-9_]*$`). List canonical names with `servel infra vars <type>`. |
 
 **Diagnostic commands:**
