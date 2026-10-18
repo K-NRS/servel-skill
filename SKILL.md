@@ -2241,6 +2241,9 @@ healthcheck:
 #   and CLEARS any prior one on redeploy — use it to truly turn health checking
 #   off (e.g. a curl-less image where you don't want even the TCP probe).
 # Omitting the block → default TCP probe on the service port (listening = healthy).
+# port: omitted → first route port, else top-level `port:` (then PORT env /
+#   detected / 3000, the magic-subdomain route's port). A routeless deploy with
+#   a port-less tcp/http check no longer fails "port must be positive, got 0".
 
 # Update strategy
 update:
