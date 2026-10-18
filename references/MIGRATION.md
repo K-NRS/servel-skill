@@ -89,7 +89,7 @@ Falls back to snapshot/fullcopy if substrate becomes unavailable, target isn't a
 | `target-sftp` (default) | restic streams direct to target via SFTP | Almost always |
 | `local` | Materialize repo on source, then rsync to target | Air-gapped targets, debugging |
 
-`--repo-location target-sftp` requires source-side SSH key access to target (`/root/.ssh/id_rsa` mounted into sidecar). Standard for servel-provisioned nodes.
+`--repo-location target-sftp` requires the source node to already trust the target over SSH (servel wires the node's existing key into the migration sidecar itself). Standard for servel-provisioned nodes. Never read, copy or print the key yourself; if the trust is missing, use `--repo-location local` or ask the user.
 
 ## Pre-copy loop (snapshot only)
 
