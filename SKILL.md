@@ -1622,7 +1622,8 @@ servel auth whoami                    # Current user info
 servel auth enable <name>             # Enable basic auth
 servel auth disable <name>            # Disable basic auth
 servel user                           # List users (everyday verbs: ls show add edit revoke modify disable enable rename rm)
-servel user show bob                  # EFFECTIVE access as the gate enforces it: level, reachable projects, scope rows, warnings
+servel user show bob                  # EVERY server in config: level, projects, abilities per server ("no account" where absent)
+servel user show bob -r KN            # one server in full: EFFECTIVE access as the gate enforces it, scope rows, warnings
 servel user edit bob                  # Change project access: TUI on a terminal; flags = `access scope add`
 servel user revoke bob --server KN    # Remove one scope row (= access scope remove)
 # `servel user <verb>` runs the `servel access user|scope` command it mirrors (same flags, same server command);
