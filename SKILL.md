@@ -1691,7 +1691,7 @@ servel access request extend <id> --by 4h # Extend expiry
 servel access request revoke <id>         # Immediately revoke approved request
 servel access request deny <id>       # Deny request
 servel access request cancel <id>     # Cancel own pending request
-servel access request expire-check    # Expire overdue grants — NOT run by the daemon; run it yourself/cron. Ending a user's last scope row disables the user
+servel access request expire-check    # Expire overdue grants by hand. Daemon runs it every 5m (authkeys tick); holds+alerts if >10 due at once or 50/24h used. Ending a user's last scope row disables the user
 servel access request-hint "msg"      # Set hint shown when access denied
 servel access request-hint --project myapp "msg"  # Project-specific hint
 # After approval, ANY command auto-configures the remote
