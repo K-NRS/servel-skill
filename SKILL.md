@@ -2068,7 +2068,7 @@ servel deploy --build-env SITE_ORIGIN=https://example.systems   # repeatable; me
 
 - Works for **all** build types (preset / nixpacks / Dockerfile). Dockerfile builds get the `ARG`/`ENV` declarations injected automatically — do not tell users to hand-edit their Dockerfile.
 - **Two deployments from one source tree** — this is the supported way. `servel.yaml` holds the primary's value; the second passes `--name`, `--domain` and `--build-env`. Nothing is written to the working tree, so neither deploy can read the other's value. Never suggest `.env.local` for this: a leftover poisons the other deployment's next build.
-- Recorded per deployment in the gitignored `.servel/state[.env].local.json` (not the committed state file: fresh clones / CI must pass `--build-env` again; older tracked values move there on the next deploy); shown by `servel inspect` under **Build Env**; previewable with `servel deploy --dry-run`.
+- Recorded per deployment in the gitignored `.servel/state[.env].local.json` (not the committed state file, which keeps only `build_env_keys`: a fresh clone / CI deploy without the values is REFUSED until `--build-env` is passed again; older tracked values move there on the next deploy); shown by `servel inspect` under **Build Env**; previewable with `servel deploy --dry-run`.
 - Baked into the image and visible via `docker history` — **build configuration, not secrets**. Secrets go in `secrets:` / `servel secrets`.
 - Changing a value invalidates the image cache (no silent reuse of an image built with the old value).
 - `SERVEL_*` keys are rejected — that prefix is reserved for values servel injects.
