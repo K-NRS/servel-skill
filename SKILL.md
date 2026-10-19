@@ -1637,6 +1637,9 @@ servel user show bob                  # EVERY server in config: level, projects,
 servel user show bob -r KN            # one server in full: EFFECTIVE access as the gate enforces it, scope rows, warnings
 servel user edit bob                  # Interactive screen: projects, envs, extra perms (role perms locked); flags REPLACE the row (= `access scope add`)
 servel user grant bob --perm deploy   # Add a permission on top of the role, keeps the row's projects (refuses role perms)
+servel user grant bob --group atlaspad -r KN   # Reach every app in access group atlaspad + create new apps in it (servel.yaml group: atlaspad); revoke with --group
+servel group assign atlaspad app1 app2 -r KN   # Admin: bind EXISTING apps to a group (new apps bind on first deploy from servel.yaml group:); unassign <app>... to unbind
+# Groups: a deploy never moves an app; scoped user refused if servel.yaml names another group, if name is another group's/unbound app, or a meta-less service runs under it. Permissions still apply to every project reached. Multi-env servel.yaml doesn't bind groups yet.
 servel user revoke bob --perm deploy  # Take it back; a role perm points to `servel user modify --role`
 servel user revoke bob --server KN    # Remove one scope row (= access scope remove)
 # `servel user <verb>` runs the `servel access user|scope` command it mirrors (same flags, same server command);
@@ -1665,7 +1668,7 @@ servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
 servel access invite --role deployer   # Generate invite token
 servel access invite --embed          # Write invite token to .servel/access.yaml
-servel access invite ls               # List pending invites
+servel access invite ls               # List pending invites (`list` alias). Any other word after `invite` is refused; only bare `invite` creates
 servel access invite revoke <id>      # Revoke invite
 servel access invite rotate <id>      # Rotate token (new token, old revoked)
 servel access invite clean            # Remove expired/used invites
