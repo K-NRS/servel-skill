@@ -466,7 +466,7 @@ When you (the agent) are working in a repo with `.servel/state.json`, you have d
 | Check build output of the last deploy | `servel logs --build` |
 | HTTP request flow (status, latency, client IP) | `servel logs --http --tail 50` (check first with `servel remote access-logs`; enable with `servel remote access-logs enable` — restarts ingress, so it prompts) |
 | What env the container actually sees | `servel env vars` |
-| What's encrypted vs plaintext | `servel secrets ls` / `servel env vars --show-source` |
+| What's encrypted vs plaintext | `servel secrets ls` / `servel env list <app>` |
 | Service health, replicas, image, command | `servel inspect` |
 | Open a shell in the live container | `servel exec sh` |
 | Run a one-off in production (migration, REPL, etc.) | `servel exec -- <cmd>` |
@@ -1059,7 +1059,7 @@ servel remote remove <name>           # Remove server
 servel remote provision               # Automated setup — never prompts; email/domain are OPTIONAL flags
 servel remote provision --email you@x.com  # Set LE contact any time (cert-expiry notices; SSL works WITHOUT it —
                                       # empty email = contact-less ACME registration, valid per RFC 8555)
-servel remote provision --repair      # Repair corrupted keys/services
+servel remote provision               # Repairs corrupted keys/services by default (--no-repair = diagnose only)
 servel remote domain set example.com  # Set primary domain
 servel remote keys add <name> --key-file pubkey.pub # Add deploy key
 servel capacity                       # Capacity forecast + per-node health verdicts + recommendations + Reservation Health + Stateful Concentration + Underused Services. Cluster headline immediately under title (healthy/busy/strained/critical). Per-node reason lines for non-healthy nodes. LOAD column dim — never alarm-colored.
@@ -1116,6 +1116,7 @@ servel move @postgres --to-remote navola --commit-source-cleanup    # Drop sourc
 # routes source → operator → target via two chained SSH sessions (operator-relayed restic).
 # Routes (Traefik dynamic configs) ship automatically; DNS update is the operator's job.
 servel dashboard                      # One-screen overview of every optional subsystem
+servel deck                           # Interactive TUI: browse/inspect/manage deployments and infra (also `ps --interactive`)
 servel dashboard --remote KN          # Same, targeting a specific server
 servel dashboard --watch 5            # Refresh in place every 5 seconds (incident monitoring)
 servel df --growers                   # Top disk consumers (curated scan + "Reclaim space:" action block; shows progress while scanning)
@@ -1243,6 +1244,8 @@ servel secrets set API_KEY            # Set (interactive prompt, never pass valu
 servel secrets list                   # List keys
 servel secrets get API_KEY            # Get value (output is masked by default)
 servel secrets rm API_KEY             # Remove
+servel secrets migrate myapp --file .env.production [--all]  # Move .env values into the encrypted store (secret-looking keys by default)
+servel secrets migrate-specs [--apply]   # Move plaintext secret values older servers left in spec.json into each generation's .env.age
 servel secrets rotate API_KEY         # Rotate
 servel secrets backup                 # Backup all secrets
 servel secrets scan                   # Scan for exposed secrets
@@ -2678,6 +2681,7 @@ servel inspect myapp            # Full details
 
 - [Template Building Guide](references/TEMPLATES.md) - Create custom infrastructure types
 - [Access Control](references/ACCESS.md) - Roles, permissions, scope composition, SSH gate path tiers, refusals
+- [CLI Reference](references/CLI.md) - Every visible command and flag, generated from the CLI's help (check a flag here before recommending it)
 - [Analytics Reference](references/ANALYTICS.md) - Visitor analytics, privacy model, agent heuristics
 - [Autonomous Remediation](references/AUTONOMOUS_REMEDIATION.md) - 2026-05-07 daemon remediations: rebalance auto-strategy, right-size advisor, load-aware placement, Reservations-only capacity, constraint drift auto-repair, stateful auto-rebalance (Tier 1 advisory always-on / Tier 2 opt-in)
 - [Cross-Node Migration](references/MIGRATION.md) - `servel move`, strategies, pre-copy loop, evacuation, validator, autonomous Tier 2 invocation
