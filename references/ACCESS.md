@@ -222,14 +222,19 @@ The file itself requires `user-manage` to read directly via `cat`.
 
 ## Join key (`join_key_seed`)
 
-- **What:** base64 ed25519 seed; `state.ProjectState.JoinKeySeed` (`internal/state/project.go`). Server copy at `/var/servel/access/join_key_seed`; deploy reads it into the project's `.servel/state.json` (`readServerJoinKeyAndFingerprint`, `internal/cli/clideploy/remote_state.go`) alongside `server_host` + `ssh_host_fingerprint`.
-- **Server side:** `ConfigureJoinKey` (`internal/server/join_key.go`) writes the derived pubkey to `/var/servel/access/authorized_keys` (added to sshd's `AuthorizedKeysFile` by `internal/server/init_system.go`; `connectViaJoinKey` logs in as `root`) as `restrict,command="/usr/local/bin/servel server join-shell" <key>`.
-- **What it can do:** join shell (`internal/server/join_shell.go`) accepts only `JOIN <token> <pubkey>` (valid invite token required), `REQUEST <pubkey> <email> <reason> <duration>` (creates a pending access request — admin approval required), `CHECK <pubkey>` (status). JOIN + REQUEST share a per-IP rate limit (5 / 15 min) and write to the audit log.
-- **Why it's in the repo:** `servel access request` in a cloned project uses it via `connectViaJoinKey` (`internal/cli/access/access_request.go`) — no prior access needed.
-- **Commit-safety conflict:** `docs/internal-docs/architecture/state-management-architecture.md` calls state.json "user-specific, gitignored" and committing it "controversial"; servel itself only adds `.servel/*.local.json` to `.gitignore`, leaving state.json tracked.
-- **Leak impact:** server host + host fingerprint disclosed; anyone can file rate-limited access requests (social-engineering risk if approved blindly). No deploy / exec / shell.
-- **Rotate:** `servel access setup --rotate-join-key` → `ConfigureJoinKey(force=true)`: old seed dead in every repo, outstanding invite tokens invalidated. Each repo's state.json needs refreshing (next deploy re-reads the seed).
-- **Agent rule:** scanner hit → explain the above, don't treat it as a server credential, don't untrack state.json unilaterally; offer keep / untrack / rotate.
+- **What:** base64 ed25519 seed. Server copy at `/var/servel/access/join_key_seed`; its pubkey sits in `/var/servel/access/authorized_keys` as `restrict,command="/usr/local/bin/servel server join-shell" <key>` (`ConfigureJoinKey`, `internal/server/join_key.go`).
+- **Where it travels now:** only inside v2 invite tokens (`svl_inv2_`), which are secrets handed out of band. Deploys no longer copy it into `.servel/state.json`; `ProjectState` has no such field, so the next save drops a `join_key_seed` older clients wrote.
+- **What it can do:** the join shell (`internal/server/join_shell.go`) runs only `JOIN <token> <pubkey>` (valid invite token required, per-IP rate limit 5 / 15 min, audited). `REQUEST`/`CHECK` from older CLIs get "upgrade servel, run `servel access request`" and record nothing.
+- **Leak impact (old repos' git history):** server host disclosed; without an invite token the key gets nothing. No deploy / exec / shell.
+- **Rotate:** `servel access setup --rotate-join-key` → old seed dead everywhere, outstanding invite tokens invalidated.
+- **Agent rule:** scanner hit → explain the above; offer rotate. Untracking state.json is no longer needed for this.
+
+## Access requests from someone new (signed line)
+
+- Requester, in the project dir, server not in their config: `servel access request [--username u --email e --reason r --duration 2h]` prints `svl_req1_<base64url json>` signed with their own SSH key (agent or key file; RSA signs rsa-sha2-256). It names the project, `server_host` and the server's SSH host-key fingerprint from state.json. Nothing is sent.
+- Admin: `servel user approve <line>` (= `servel access request approve <line>`; no top-level `access approve`, which would add a gate map line). Client verifies signature + age (max 7 days), prints key fingerprint, username/email marked unverified, and a best-effort `github.com/<username>.keys` hint (key matches / no match / unavailable, 3s timeout, never blocks). Server re-verifies, checks the host key is one of its own `/etc/ssh/ssh_host_*_key.pub`, then `RequestManager.ApproveSignedRequest`: refuses existing username (never adds a key; use `servel user modify <u> --ssh-key` on purpose), a key another user holds, leftover scope rows, replays, self-approval; else scope row (project only) → `CreateUserWithKey` (role developer) → approved request record.
+- Requester then runs `servel join <host>` (printed on both sides).
+- Pending requests that came through the old join shell (they carry `ssh_public_key`) are refused by `request approve <id>` with `ErrJoinShellRequest`.
 
 ## Files at a glance
 
