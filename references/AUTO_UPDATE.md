@@ -61,7 +61,7 @@ The same pipeline runs on every server-side daemon, but **never auto-applies**. 
 - **Goroutine dispatch**: `m.checkServerUpdates()` calls `go m.runUpdateBody()` so a slow earlier step (constraint-drift remediation, overlay probe) cannot starve the update check. Mutex on `updateCheckState` serializes overlapping in-flight goroutines. Fix landed in `4b677e9` after live diagnosis on KN where `autoRepairMissingConstraints` was holding the tick goroutine for many minutes — `update.json` was never written
 - Logs `servel update available` with current/latest/channel
 - Fires `ConditionUpdateAvailable` info alert through every configured channel (Telegram, Slack, Discord, webhook). One alert per discovered version — re-discovering same version is a no-op
-- **Read by `servel remote status`** — the recommendation surfaces inline. `internal/cli/cliremote/update_check.go:checkRemoteServelUpdate` reads `cat /var/servel/cache/update.json` on the remote, returns a `Recommendation{Level: "info", Message: "New servel release available: vX.Y.Z", Action: "servel remote upgrade"}`. Returns nil on any error — best-effort surface, never blocks status
+- **Read by `servel remote status`** — the recommendation surfaces inline. `internal/cli/cliremote/update_check.go:checkRemoteServelUpdate` reads `cat /var/servel/cache/update.json` on the remote, returns a `Recommendation{Level: "info", Message: "New servel release available: vX.Y.Z", Action: "servel upgrade-servers"}`. Returns nil on any error — best-effort surface, never blocks status
 
 ## Rolling fleet upgrades
 
