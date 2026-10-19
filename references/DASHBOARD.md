@@ -79,7 +79,7 @@ servel dashboard --remote KN      # specific server
 servel dashboard --watch 5        # in-place refresh every 5 seconds
 ```
 
-Multi-server sweeps: loop the command, one server at a time. Output is human-formatted — for scripts use the underlying subcommand JSON (`servel capacity --json`, `servel alerts status --json`, `servel storage status`).
+Multi-server sweeps: loop the command, one server at a time. Output is human-formatted — for scripts use the underlying subcommand JSON (`servel capacity --json`, `servel alerts monitored --json`, `servel storage status`).
 
 ### `--watch` for incident monitoring
 
@@ -110,8 +110,8 @@ src/internal/cli/cliutil/{icons,colors}.go  # ✓/○/!/ⓘ rendering
 | `! Manager disk 87% used` | `servel df --nodes`, `servel prune --all`, `servel remote gc` |
 | `! Snapshot strategy (restic) — only on 3/5 nodes` | `servel ssh <missing-node> -- apt install -y restic` |
 | `! Middleware config missing` | `servel doctor --fix` or `servel remote fix-middlewares` |
-| `! Master key missing` | `servel auth init` (CRITICAL — secrets unreadable) |
-| `! Active alerts: N firing` | `servel alerts status` |
+| `! Master key missing` | `servel remote provision` (CRITICAL — secrets unreadable) |
+| `! Active alerts: N firing` | `servel alerts monitored` |
 | `○ Visitor analytics off` | `servel analytics enable <app>` per app |
 | `○ Capacity forecasting off` | Daemon not running — `systemctl start servel-daemon` |
 | `○ Alert channels off` | `servel alerts setup telegram\|slack\|discord\|webhook` |
@@ -120,8 +120,8 @@ src/internal/cli/cliutil/{icons,colors}.go  # ✓/○/!/ⓘ rendering
 | `○ Auto-rebalance disabled in config` | Edit `/var/servel/config.yaml` → `rebalance_enabled: true` |
 | `○ Access ACL — single-operator mode` | `servel access invite --role deployer` |
 | `○ SSH gate (ForceCommand) off` | `servel access setup` |
-| `○ Bastion off` | `servel bastion deploy` |
-| `○ Access 2FA (TOTP) off` | `servel access mfa setup <user>` per user |
+| `○ Bastion off` | `servel bastion install` |
+| `○ Access 2FA (TOTP) off` | no CLI enrollment yet; informational |
 
 ## Versioning
 

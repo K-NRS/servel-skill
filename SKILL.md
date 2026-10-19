@@ -1211,7 +1211,7 @@ servel selfcheck                      # offline binary smoke (config + state-dir
 
 **Cross-server (second line of defense).** `servel upgrade-servers` is rolling-by-default and applies the SAME heartbeat verdict across SSH: after each server's `sudo servel upgrade --force` (which runs the server-local sentinel = first line of defense), the client gates on `version --json` + a fresh `/var/servel/daemon/health.json` carrying the new build id. On failure it auto-reverts remotely (`sudo servel upgrade --rollback` + daemon restart), budgeted per `server:<name>` — UNLESS the server-local sentinel already reverted (old build fresh → no double rollback). First failure aborts the rest.
 
-Daemon-side: every `servel remote status` reads `/var/servel/cache/update.json` (written by the daemon's once-per-24h check) and surfaces "new servel release available" inline. Auto-apply on the daemon is **never** done — operators run `servel remote upgrade` (or `servel upgrade-servers`) to roll the fleet.
+Daemon-side: every `servel remote status` reads `/var/servel/cache/update.json` (written by the daemon's once-per-24h check) and surfaces "new servel release available" inline. Auto-apply on the daemon is **never** done — operators run `servel upgrade-servers` (or `servel upgrade-servers`) to roll the fleet.
 
 ### Swap Management
 
@@ -1243,11 +1243,11 @@ Defaults: zram **on** (lz4, 2G), disk swapfile **2G→8G elastic**, swappiness 1
 servel secrets set API_KEY            # Set (interactive prompt, never pass values inline)
 servel secrets list                   # List keys
 servel secrets get API_KEY            # Get value (output is masked by default)
-servel secrets rm API_KEY             # Remove
+servel secrets delete API_KEY         # Remove
 servel secrets migrate myapp --file .env.production [--all]  # Move .env values into the encrypted store (secret-looking keys by default)
 servel secrets migrate-specs [--apply]   # Move plaintext secret values older servers left in spec.json into each generation's .env.age
 servel secrets rotate API_KEY         # Rotate
-servel secrets backup                 # Backup all secrets
+servel secrets export -o backup.age   # Backup all secrets (encrypted; restore with secrets import)
 servel secrets scan                   # Scan for exposed secrets
 servel secrets copy <src> <dst>       # Copy secrets: deployment ↔ deployment ↔ .env
 servel redeploy <name>                # Apply secret changes to running container (no rebuild)
@@ -1565,7 +1565,7 @@ servel alerts test                    # Test notifications
 # Backups default-on (daemon): stateful infra auto-enrolled into daily restic schedules (opt-out: infra backup.auto_enroll:false / backup_auto_enroll_enabled=false); restic auto-installed when missing; weekly restic check + monthly restore-to-scratch drill — backup_verify_failed alert = your safety net is broken, act.
 # Containment (daemon, default-on): crash-loop quarantine — a storm is one replica slot with >=5 restarts in 10 min (read from Swarm task history by the leader every 5 min); a service storming >=2 consecutive windows is scaled to 0 (budget 3/24h cluster-wide, 1/stack; stack root-folding quarantines only the -db root; >5 unrelated storms = node-level breaker, alert only; release: servel scale <name> 1 / servel infra repair <infra>). Infra dup-generation reconciler force-converges services running MORE tasks than desired (sustained 2 checks, budget 5/24h), only the infra's own services (never a name-extending sibling's: db vs db-staging).
 # Noise control (daemon-side, /var/servel/alerts.yaml): EDGE-TRIGGERED — each drift class (condition|service|server) is a FIRING/RESOLVED state machine; an alert fires ONCE on entry, is suppressed while unchanged (NO re-fire per cooldown), re-delivers only on severity/fingerprint change, recovers once on the resolving edge; state persisted (restart does not replay). Flap damping: N consecutive fails to alert + N consecutive clean cycles to recover, so oscillating probes emit no unreachable/repaired pairs. Critical heartbeat: still-FIRING criticals re-paged every reminder_interval (1h); warnings/operator-intent (e.g. parked scale-0) fire once + audit only, never nag. digest_threshold 5 + digest_window 60s collapse bursts into ONE summary; telegram bell rings ONLY for critical. suppress_cooldown now = RESOLVED-entry grace/reap window (not a re-fire interval). **CPU (2026-10-13):** averaged over the whole check interval (workers: 5-min load/core), pages after 2 consecutive intervals ≥ `cpu_high` threshold in alerts.yaml (default 90), recovers after 2 below 70%, never on the daemon boot tick; RECOVERED shows the current value. **Domain probe:** reserved TLDs (`.invalid`/`.localhost`/`.test`/`.example`) never probed; 404 = down only with `X-Servel-Route: none` (an app's own 404 at `/` is up). Before this fix a steady incident re-paged every producer cooldown (30m-1h) because the suppressor's orphan window was 30m; it is now 6h for ongoing states (Heartbeat or Steady policy), while one-shot events (auto-heal, rebalance) keep 30m so each recurrence still pages.
-servel alerts status                  # Show alert status
+servel alerts monitored                  # Show alert status
 servel alerts history                 # View alert history
 servel alerts pause 2h                # Maintenance mode (pause alerts)
 ```
