@@ -940,7 +940,7 @@ servel infra customize db --service db --memory 4GB
 servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
                                       #   Override persisted in spec; survives recreate.
-servel infra upgrade db --image postgres:16  # Safely upgrade: auto-backup → persist pre-upgrade image set → apply → health-gate (convergence + template readiness) → AUTO-ROLLBACK to prior image set + alert on gate failure (single-service AND stack paths). --skip-health bypasses gate AND rollback (operator intent). Stateful stays stop-first.
+servel infra upgrade db --image postgres:16  # Safely upgrade: auto-backup → persist pre-upgrade image set → apply → health-gate (convergence + template readiness) → AUTO-ROLLBACK to prior image set + alert on gate failure (single-service AND stack paths). --skip-health bypasses gate AND rollback (operator intent). Stateful stays stop-first. Host-mode-port services (poste.io) always roll stop-first; rollback target is digest-pinned (spec digest, else running local digest), warns if a floating tag can't be pinned.
 servel infra upgrade supa --service auth --image supabase/gotrue:v2.186.0  # Upgrade specific service
 servel infra domains add db --domain db.example.com  # Add domain alias
 servel infra domains remove db --domain db.example.com
