@@ -708,6 +708,8 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 
 **Detection priority:** `servel.yaml` -> `docker-compose.yml` -> `Dockerfile` -> preset -> Nixpacks
 
+Node preset = Node 22 LTS (`node:22-alpine`; Next standalone on Bun runs `node:22-slim`). Node 20 is EOL. Floating base tags only pick up Node patch releases on `servel deploy --pull --rebuild`.
+
 **Smart mode (default):** Detects what changed -> config-only (~8s), static-only (~10s), or full build.
 
 **Key flags:**
