@@ -146,7 +146,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `dashboard` | One-screen view of every optional subsystem. |
 | `deck` | Interactive TUI dashboard. |
 | `verify` | Health + SSL + DNS + routing sanity. |
-| `validate` | Validate `servel.yaml` before deploy. |
+| `validate` | Validate `servel.yaml` before deploy. Every load also warns on keys servel ignores (`unknown key "cpu" in resources (did you mean "cpus"?)`) — fix them, they have no effect; `x-` keys are skipped. |
 | `detect` | Show what auto-detection would do for current project. |
 | `doctor` | Client/server connectivity + cluster-wide health (`migration` subcommand for end-to-end migration self-test). `doctor overlay [-r <srv>]` probes every Traefik-routed service from the Traefik container's netns; services scaled to 0 desired replicas are skipped as operator intent (a skip line names them). "Reachable" = the probed port answered — any HTTP status, and redirect-to-HTTPS responses (e.g. poste.io 302) count. `--fix` force-recreates genuine failures (1h per-service cooldown). |
 | `df` | Disk usage (`--growers` for curated 16-path scan). |
