@@ -79,6 +79,8 @@ Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-no
 | Manual `iptables -A INPUT -s X -j DROP` | `servel ban <ip>` |
 | Per-app IP blocking via raw Traefik labels | `servel ban <name> <ip>` |
 | Manual `rsync` of Docker volumes between nodes | `servel move @<infra> --to <node> --fast` |
+| CI should build, cluster only pulls | `image: auto` (or `--image auto` / `SERVEL_IMAGE=auto`) + `servel ci setup github-actions` (one-time admin step: `servel auth registry add ghcr.io --token <PAT with read:packages>`) |
+| Deploy an image that is already built | `servel deploy --image ghcr.io/owner/app:<sha>` (or `image:` with a tag in servel.yaml) |
 | A repo with no GitHub/GitLab CI, or tests/builds that must run on the server | Built-in CI: `servel ci pipeline-init` (writes `.servel-ci.yml`) → `servel ci run` (runs on the server over SSH); `servel ci pipelines add` + `servel ci webhook <p>` for push-triggered runs. External CI instead: `servel ci setup github-actions` |
 | `docker service update --constraint-add node.hostname==` for stateful | `servel move @<infra> --to <node>` (moves data too) |
 | Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
@@ -733,7 +735,8 @@ Node preset = Node 22 LTS (`node:22-alpine`; Next standalone on Bun runs `node:2
 - `--dashboard` -- Real-time TUI dashboard
 - `--env` -- Target environment
 - `--build-on <node>` -- Build on specific node. **Managers are excluded from auto-selection whenever a worker is eligible (2026-09-20)** — a build is the heaviest thing servel runs and the manager is the node whose loss takes the cluster with it. `--build-on` still wins (naming a host is intent), and it now WARNS when it is dropped instead of being silently discarded. **Builds now actually run on the selected node (2026-09-20):** a server-side deploy hops one SSH from the manager to the chosen worker, streams the context in, and builds there. Previously the selected node was printed and IGNORED — every server-side build ran wherever the deploy happened to be, i.e. the manager. A deploy that selected a remote host it genuinely cannot reach REFUSES and names `--local-build`, rather than quietly building on the wrong node. The hop needs `ssh -o BatchMode=yes <worker> true` to work from the manager, which `servel node add` already sets up. **Auto-selection also gates on disk before ranking on RAM:** a candidate at >=90% used (df semantics) is skipped with `disk gate skipped <host> at N% (>=90% used)`; an UNMEASURED node is neutral (never excluded); if every candidate is over the ceiling the least-full one is used anyway. The gate only re-routes — the >=95% preflight is still the only thing that BLOCKS a deploy (`--force-low-disk` overrides that, 85-94% only warns).
-- `--local-build` -- Build locally, push to registry
+- `--local-build` -- Build locally, push to the server's registry
+- `--image <auto|registry/path|registry/path:tag>` -- CI-built image mode (cluster only pulls); see "CI-Built Images". Also `servel.yaml` `image:` / env `SERVEL_IMAGE` (flag > env > file). Excludes `--local-build` and `--reuse-image`
 - `--force-low-ram` -- Proceed with a remote build even when no build node has the framework's recommended RAM. By default servel now FAST-FAILS before a doomed under-RAM build (e.g. Next.js 16 + Turbopack needs ~4GB) and tells you to use `--local-build`; pass this to override and try anyway.
 - **Stall is fatal (2026-09-20).** A build producing NO output for 20 minutes aborts and the server-side job is actually terminated (it used to warn twice and wait out a 45-minute absolute deadline while the job ran on). Override with `SERVEL_DEPLOY_STALL_TIMEOUT=45m`, or `0` to disable for a legitimately silent build. Do not paper over a stall by raising it without reading `servel logs <id> --op 1` first.
 - `--new` -- Force new deployment with unique subdomain
@@ -1916,6 +1919,7 @@ servel remote registry show           # `Storage: s3 <bucket>/<prefix> @ <endpoi
 docker login ghcr.io
 servel auth registry add ghcr.io --import-docker-config  # Easiest: read from ~/.docker/config.json (falls back to credsStore/credHelpers — Docker Desktop, pass, secretservice)
 servel auth registry add ghcr.io --username k-nrs --password $GHCR_TOKEN  # Explicit
+servel auth registry add ghcr.io --token <PAT with read:packages>        # Read credentials for CI-built images (server pulls with these)
 servel auth registry test ghcr.io                        # Verify before bulk migrations
 servel auth registry ls                                  # List configured
 servel auth registry rm ghcr.io                          # Remove
@@ -2148,22 +2152,41 @@ servel deploy                       # Deploy (run it in the dir that holds serve
 - Idempotent join: reruns reuse the same `ci-<owner>-<repo>` user and spend no invite use
 - Revoke/rotate of the invite removes the `ci-*` users it created
 
-**GitHub Actions example:**
+**GitHub Actions example** (what `servel ci setup github-actions --dir site` generates):
 ```yaml
-steps:
-  - uses: actions/checkout@v4
-  - name: Install servel
-    run: |
-      curl -fsSL https://servel.dev/install.sh -o /tmp/servel-install.sh
-      bash /tmp/servel-install.sh
-  - name: Join
-    run: servel access join
-    env:
-      SERVEL_TOKEN: ${{ secrets.SERVEL_TOKEN }}
-  - name: Deploy
-    working-directory: site   # where servel.yaml lives, if not the repo root
-    run: servel deploy
+name: Deploy to Servel
+on:
+  push:
+    branches: [main, master, staging, develop]
+concurrency:
+  group: servel-deploy-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # runner build pushes to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Servel
+        run: |
+          curl -fsSL https://servel.dev/install.sh -o /tmp/servel-install.sh
+          bash /tmp/servel-install.sh
+      - name: Connect to Server
+        run: servel access join
+        env:
+          SERVEL_TOKEN: ${{ secrets.SERVEL_TOKEN }}
+      - name: Deploy
+        run: servel deploy
+        working-directory: site   # where servel.yaml lives
+        env:
+          SERVEL_ENV: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'master' && 'production' || github.ref_name == 'staging' && 'staging' || 'staging' }}
+          SERVEL_IMAGE: auto
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
+`servel ci setup` flags: `--dir <path>` (servel.yaml subfolder; auto-found), `--preview` (PR/MR preview deploys), `--build-on-server` (drop runner build: no `packages: write`/`SERVEL_IMAGE`), `--uses` (default 1). Deploys on push only; token only via `SERVEL_TOKEN` env. GitHub/GitLab build on the runner (GitLab: `docker:27` + dind, `SERVEL_IMAGE: auto`); Bitbucket/CircleCI/Jenkins/Drone still build on the server. It prints the one-time admin step `servel auth registry add <ghcr.io|registry.gitlab.com> --token <...>`.
+
 (Pin the CLI with `--client --version "<ver>"` on the install script if you need reproducible builds; review install.sh before adopting it in CI.)
 
 **Token rotation:**
@@ -2171,6 +2194,18 @@ steps:
 servel access invite rotate <id-prefix>    # New token, old revoked, ci-* users removed; update the CI secret
 servel access setup --rotate-join-key      # Invalidate ALL tokens (emergency)
 ```
+
+### CI-Built Images (cluster only pulls)
+
+One setting turns it on: `image:` in servel.yaml, env `SERVEL_IMAGE`, or `servel deploy --image <v>` (flag > env > file). Plain `servel deploy` then builds where it runs (laptop/CI runner), pushes, and the server deploys that image with no build.
+
+- `auto` = registry from git origin (GitHub `ghcr.io/<owner>/<repo>`, GitLab `registry.gitlab.com/<group>/<project>`); `<registry>/<path>` = servel builds + tags; `<registry>/<path>:<tag>` or `@sha256:…` = prebuilt, deployed as-is.
+- Tag = first 12 chars of commit sha (`GITHUB_SHA`/`CI_COMMIT_SHA`/git HEAD); dirty tree outside CI = `-dirty-<unix>`. Tag already in registry = build skipped (reruns free).
+- Login: servel logs in from `GITHUB_TOKEN` (ghcr.io; workflow needs `permissions: packages: write`) or GitLab `CI_REGISTRY`/`CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD`; else your `docker login`.
+- Cache: buildx builder `servel-ci` (docker-container, auto-created) + registry cache `<repo>:buildcache` (mode=max). Detection order: compose > Dockerfile > preset > nixpacks (a Dockerfile beats a preset).
+- Cluster pull: admin once runs `servel auth registry add ghcr.io --token <PAT with read:packages>` (GitLab: deploy token with `read_registry` on `registry.gitlab.com`). Server uses the image host's credentials for the pull and Swarm workers; nothing is pushed to the self-hosted registry. Public images need nothing; a failed private pull names this command.
+- Gated users (CI `deployer`) may deploy a prebuilt image only from a host in the server's auth store or the server's own registry; otherwise refused with the `auth registry add` fix. No new permission.
+- `--image` excludes `--local-build` (builds locally, pushes to the server's registry) and `--reuse-image`.
 
 ### Troubleshoot Routing
 
@@ -2193,6 +2228,9 @@ domains:                              # Multiple domains
   - app.example.com
   - api.example.com
 port: 3000
+
+# CI-built image mode: build on laptop/CI runner, push, cluster only pulls
+# image: auto                          # registry from git origin; or <registry>/<path>, or <registry>/<path>:<tag> (prebuilt, no build)
 
 # Registry override (default: autodetect from git origin)
 # registry: ghcr.io/k-nrs/myapp       # explicit external
