@@ -137,7 +137,7 @@ servel access invite rotate <id> [flags]
 Join a server and add it to your servel config.
 
 ```bash
-servel access join <server-address | invite-token> [flags]
+servel access join [server-address | invite-token] [flags]
 ```
 
 | Flag | Description |

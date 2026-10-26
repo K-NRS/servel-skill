@@ -1400,7 +1400,7 @@ Templates never retro-apply. **Pre-existing instances** must be fixed in place w
 ```bash
 servel verify <name>                  # Full verification
 servel verify config                  # Verify configuration
-servel verify health <name>           # Current Swarm tasks + HTTP; 5+ current-generation restarts fail; Docker health healthy/starting/unhealthy/none; unavailable evidence stays unknown
+servel verify health <name>           # Current Swarm tasks + HTTP; 5+ current-generation restarts fail; Docker health healthy/starting/unhealthy/none; unavailable evidence stays unknown (carries the reason). Bare name = exact app match (`servel-<name>`, `servel-<name>-*`; NOT other apps or infra; globs still work, same filter for all verify subcommands). Exit 1 if any deployment is Fail/Error (Warn/N/A = 0) -> usable as a CI gate
 servel verify ssl <domain>            # Check SSL certificates
 servel verify cf-ssl [project]        # Classify CF→origin SSL mode (Full strict / Flexible / Off)
 servel verify dns <domain>            # Check DNS configuration
@@ -1549,7 +1549,7 @@ The identity auto-propagates to ALL server-side audit writes (`deploy`, `rollbac
 
 **Registry-backed build cache (default-on, multi-node)**: when a registry is configured, builds use a registry-stored BuildKit layer cache (`--cache-to`/`--cache-from type=registry,mode=max` on the `docker-container` builder) under a single `<image>:buildcache` tag, overwritten each build. It survives builder resets and is shared across nodes (a fresh/other node pulls warm cache instead of building cold), and the deps `RUN --mount=type=cache` now survives transient BuildKit session-error recovery (restart-before-recreate). Disk-bounded: tag overwritten per build (no per-version accumulation), stale layers reclaimed by daily registry garbage-collect, `:buildcache` preserved by retention. Disable/tune: `build_cache.registry_export` (bool, default true), `build_cache.registry_export_mode` (`max` default / `min`). The image cache (skip-build on unchanged source hash) is separate and unchanged. **Framework build caches are per app (plan 053)**: preset `.next/cache`, `.nuxt`, `node_modules/.vite`, `.turbo` mounts use `id=servel-<app>-<framework>,sharing=locked` (`internal/presets/dockerfile.go` `buildFrameworkCacheMount`), so apps on one build node stop evicting each other's cache; package-manager store mounts stay shared (content-addressed). Mounts are node-local: a build that lands on a different node is cold once.
 
-**Skip-build source hash**: `servel deploy` reuses the previous image ("Source unchanged (hash: …), skipping build") only when a hash of every uploaded file is unchanged. `.dockerignore` is NOT applied to that hash (since 2026-10-01: a root-anchored `marketing` pattern used to hide `components/marketing/*.tsx`, shipping stale code as success), so editing a dockerignored file triggers a cache-hit build. If a deploy still says "Source unchanged" after a real code change, that is a bug; `--rebuild` forces a build.
+**Skip-build source hash**: `servel deploy` reuses the previous image ("Source unchanged (hash: …), skipping build") only when a hash of every uploaded file is unchanged. `.dockerignore` is NOT applied to that hash (since 2026-10-01: a root-anchored `marketing` pattern used to hide `components/marketing/*.tsx`, shipping stale code as success), so editing a dockerignored file triggers a cache-hit build. If a deploy still says "Source unchanged" after a real code change, that is a bug; `--rebuild` forces a build. Smart-deploy source hashing works for projects in a repo subdirectory (e.g. `site/` in a monorepo/CI), so incremental builds work there; when hashing still fails, the warning includes git's reason.
 
 **Note:** `env copy` targets plain Docker service env vars; `secrets copy` targets the encrypted store. Same endpoint syntax and flags for both (see `secrets copy` section above). Use `env copy` for non-sensitive config, `secrets copy` for credentials.
 
@@ -1676,11 +1676,12 @@ servel access setup --rotate-join-key # Rotate join key
 servel access invite --role deployer   # Generate invite token
 servel access invite --embed          # Write invite token to .servel/access.yaml
 servel access invite ls               # List pending invites (`list` alias). Any other word after `invite` is refused; only bare `invite` creates
-servel access invite revoke <id>      # Revoke invite
-servel access invite rotate <id>      # Rotate token (new token, old revoked)
+servel access invite revoke <id>      # Revoke invite; also removes the `ci-*` users it created (their key came from the token). People who joined with own keys are listed and keep access (`servel access user rm <name>`)
+servel access invite rotate <id>      # Rotate token (new token, old revoked, `ci-*` users removed). Update the CI secret; next run recreates the ci user with the new token's key
 servel access invite clean            # Remove expired/used invites
 servel join 203.0.113.7               # Key already registered by an admin: join by IP/domain/any DNS name → saves remote (user root, key = identity), prints your access + a per-permission "What you can do" command list with your project names. NOT `remote add` (wrong user + provisions). Cloudflare-proxied domain → join asks https://<domain>/.well-known/servel/join with a key-signed request; registered keys get IP+port+host keys (pinned), others 404. Off per server: `servel daemon config set join_lookup_enabled false` (then join by IP). Do NOT publish a DNS-only ssh.<domain>
-servel access join <token>            # Join server (idempotent -- safe for CI reruns)
+servel access join <token>            # Join server. Rejoin with a key the SAME invite registered = no-op, spends no use (even after uses run out). Key registered another way -> refused without naming its user ("connect with it by address: servel join <server-address>"). Different key whose comment derives an existing username -> refused: admin runs `servel access user modify <user> --ssh-key <key.pub>`, or use a key with another comment (`ssh-keygen -C <name>`). Usernames from the key comment are always valid (lowercased, leading digits dropped, 32 chars max). Scoped invites: user created disabled, enabled after scopes are saved
+servel access join                    # Token from SERVEL_TOKEN env (keeps it out of argv/logs) -- use this in CI
 servel access join <token> -i ~/.ssh/key  # Join with specific SSH key (multi-identity local testing)
 # Identity = one remote per key. Same host + different key → new remote (dedupe is by host+key, not host alone).
 # Switch identity = switch --remote. Default identity = the remote named by default_remote in ~/.servel/config.yaml.
@@ -2131,35 +2132,43 @@ servel access invite --role deployer --expiry 8760h --uses 10000
 
 # 2. Store token as CI secret (e.g., SERVEL_TOKEN in GitHub Actions)
 
-# 3. In CI pipeline:
-servel access join $SERVEL_TOKEN    # Idempotent -- safe for ephemeral CI runners
-servel deploy --verbose             # Deploy
+# 3. In CI pipeline (token from env, never on the command line):
+servel access join                  # Idempotent -- safe for ephemeral CI runners
+servel deploy                       # Deploy (run it in the dir that holds servel.yaml)
 ```
 
+**CI needs no SSH key.** With `CI=true` (set by GitHub Actions and GitLab CI) and no `--identity`, servel derives an ed25519 key from the token and stores it under the servel config dir (`keys/servel-ci-<fp>`). Every run registers/rejoins the same user `ci-<owner>-<repo>` (from `GITHUB_REPOSITORY` or `CI_PROJECT_PATH`; `ci-pipeline` otherwise). The token is the pipeline's single secret. Without `CI=true` and no `~/.ssh` key, the error says to pass `--identity`. No `ssh-keygen` step needed.
+
 **Why tokens > SSH keys:**
-- No private key material in CI secrets
+- No private key material in CI secrets (the key is derived from the token at run time)
 - Built-in MITM protection (host fingerprint in token)
 - Built-in expiry + use limits
 - Scoped to deployer role (no shell access)
 - Deploys that carry secrets or `--link-infra` env work through a deployer key since client `0d0e9701` (2026-10-10). Older clients wrote the credential file with `tmp=$(mktemp …)`, which the access gate refuses, and failed with `failed to write secrets file on server`. Fix is `servel upgrade` on the CLIENT (the CI runner), no server change.
-- Each join generates ephemeral SSH keypair
-- Idempotent join -- reruns don't fail or waste invite uses
+- Idempotent join: reruns reuse the same `ci-<owner>-<repo>` user and spend no invite use
+- Revoke/rotate of the invite removes the `ci-*` users it created
 
 **GitHub Actions example:**
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  # Install a pinned servel CLI version; review install.sh before adopting it in CI
-  - run: |
-      curl -fsSLo servel-install.sh https://servel.dev/install.sh
-      sh servel-install.sh --client --version "${{ vars.SERVEL_VERSION }}"
-  - run: servel access join ${{ secrets.SERVEL_TOKEN }}
-  - run: servel deploy --verbose
+  - name: Install servel
+    run: |
+      curl -fsSL https://servel.dev/install.sh -o /tmp/servel-install.sh
+      bash /tmp/servel-install.sh
+  - name: Join
+    run: servel access join
+    env:
+      SERVEL_TOKEN: ${{ secrets.SERVEL_TOKEN }}
+  - name: Deploy
+    working-directory: site   # where servel.yaml lives, if not the repo root
+    run: servel deploy
 ```
+(Pin the CLI with `--client --version "<ver>"` on the install script if you need reproducible builds; review install.sh before adopting it in CI.)
 
 **Token rotation:**
 ```bash
-servel access invite rotate <id-prefix>    # New token, old revoked
+servel access invite rotate <id-prefix>    # New token, old revoked, ci-* users removed; update the CI secret
 servel access setup --rotate-join-key      # Invalidate ALL tokens (emergency)
 ```
 
