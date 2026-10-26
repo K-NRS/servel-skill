@@ -1621,7 +1621,7 @@ servel status
 ### CI/CD
 
 ```bash
-servel ci setup                       # Interactive wizard (init + token creation)
+servel ci setup                       # Interactive wizard (init + token creation; GitHub: stores SERVEL_TOKEN via gh, else prints token once)
 servel ci setup github-actions        # Setup specific provider
 servel ci init github-actions         # Generate workflow only (no token)
 servel ci init gitlab-ci --legacy-ssh # Legacy SSH key-based template
