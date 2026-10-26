@@ -2132,7 +2132,7 @@ servel ci setup
 
 # Or step by step:
 # 1. Create a deployer token (on your machine, one-time)
-servel access invite --role deployer --expiry 8760h --uses 10000
+servel access invite --role deployer --expiry 8760h --uses 1
 
 # 2. Store token as CI secret (e.g., SERVEL_TOKEN in GitHub Actions)
 
