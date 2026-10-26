@@ -157,7 +157,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Exec / shell / tunnel
 | Command | What it does |
 |---|---|
-| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. From a real terminal, `--shell` / bare `sh` open a PTY-backed session (cross-node included). |
+| `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. Gated keys need `shell` for exec, `--timeout` included (the gate reads `timeout N docker exec` as the exec itself; deployer has no `shell`). From a real terminal, `--shell` / bare `sh` open a PTY-backed session (cross-node included). |
 | `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
@@ -871,6 +871,7 @@ servel infra status                   # Health check all (distinguishes "warming
                                       #   0/0 services = "stopped" (never "healthy"); all-0 infra = stopped in list+status.
                                       #   `infra backup` on a stopped infra fails fast: start -> backup -> stop.
 servel infra vars db                  # View env vars
+servel infra vars @sb --service auth --source service GOTRUE_SITE_URL  # ONLY named keys, KEY=value lines; secret-looking stay masked; exits non-zero if unset. config-read: the CI/deployer way to read infra env — never `exec … printenv` (needs `shell`, exposes every container secret)
 servel infra update db --memory 2g    # Update config (memory, cpu, domain, node, env)
                                       # — multi-service stacks AND single-replica stateful infra get a blast-radius
                                       #   preview + confirmation prompt before any restart. Skip with --yes.
