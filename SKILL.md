@@ -1750,6 +1750,7 @@ servel ps    # (in project dir) → auto-joins if approved, then runs
   - **`--show-secrets`.** On any gated servel command it needs `secrets-read`.
   - **`infra update --env` / `infra customize --env` secret keys (2026-10-26).** Plain config keys stay `config-read` (deployer can set GOTRUE_SITE_URL from CI); a key whose name looks secret (PASS/PWD/SECRET/KEY/TOKEN/CREDENTIAL/AUTH/PRIVATE/JWT/SALT) also needs `secrets-write`. Every `--env` counts.
   - **`infra customize --image/--command/--health-cmd` need `shell` (2026-10-27).** They pick what runs in the infra container (code next to its secrets). `--memory/--cpu/--host/--ulimit/--clear-*` stay `config-read`.
+  - **`infra upgrade --image` (2026-10-27):** same repo, new tag/digest = `config-read`; a different repository/registry needs `shell`. Multi-service stacks: always pass `--service`.
   - **Client reads.** New client code never cats a spec or runs a raw inspect. It uses the `clictx` helpers over `servel remote query`, which fall back automatically against older servers:
 
     | Helper | Query kind | Needs |
