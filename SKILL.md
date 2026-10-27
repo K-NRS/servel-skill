@@ -83,7 +83,7 @@ Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-no
 | Deploy an image that is already built | `servel deploy --image ghcr.io/owner/app:<sha>` (or `image:` with a tag in servel.yaml) |
 | A repo with no GitHub/GitLab CI, or tests/builds that must run on the server | Built-in CI: `servel ci pipeline-init` (writes `.servel-ci.yml`) → `servel ci run` (runs on the server over SSH); `servel ci pipelines add` + `servel ci webhook <p>` for push-triggered runs. External CI instead: `servel ci setup github-actions` |
 | `docker service update --constraint-add node.hostname==` for stateful | `servel move @<infra> --to <node>` (moves data too) |
-| Moving one stateless member of a stack (`docker service update` on supabase-rest) | `servel move @<stack>/<member> --to <node> [--plan]` (refuses data members; copies config files first; survives redeploys) |
+| Moving one stateless member of a stack (`docker service update` on supabase-rest) | `servel move @<stack>/<member> --to <node> [--plan]` (refuses data members; keeps supavisor with db unless `--allow-split`; copies config files first; survives redeploys) |
 | Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
 | Eyeballing benchmarks to guess if the fast path is actually fast at your data size | `servel bench migration --target <node> --size 1GB` (deploys ephemeral postgres, measures both strategies, prints comparison table) |
 | Grepping `journalctl` to figure out what migrated, when, and how long it took | `servel move history` (audit trail at `/var/servel/migrations/history.jsonl`) |
