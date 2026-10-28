@@ -611,7 +611,7 @@ servel deploy --verbose --dashboard             # Real-time TUI dashboard during
 servel deploy --verbose --save                  # Persist flags to servel.yaml
 servel deploy --exclude target --exclude web/.next  # Extra excludes (merged with built-ins + .servelignore)
 servel deploy --memory 1g --cpu 0.5   # Resource limits
-servel deploy --cpu none              # Remove the CPU limit (also: resources.cpus: none, infra update/customize --cpu none)
+servel deploy --cpu none              # Remove the CPU limit (also: resources.cpus: none, infra update/customize --cpu none); prints "CPU limit X → no limit — can now use every core on <node>" + audit resources.cpu_limit_removed
 servel deploy --quiet                 # Minimal output (only final result)
 # No domain configured at all? The deploy still gets a live HTTPS URL: servel
 # auto-claims a magic subdomain (https://<app>-<hash6>.<magic-domain>) and wires
