@@ -1252,7 +1252,7 @@ Defaults: zram **on** (lz4, 2G), disk swapfile **2G→8G elastic**, swappiness 1
 ### Secrets
 
 ```bash
-servel secrets set myapp API_KEY=...  # Set; app first works from any dir. Several pairs = one write
+servel secrets set myapp API_KEY=...  # Set; app first works from any dir (searches other remotes if not on default). Several pairs = one write
 pbpaste | servel secrets set myapp API_KEY -   # stdin keeps the value out of shell history (no interactive prompt exists)
 servel secrets list                   # List keys
 servel secrets get API_KEY            # Get value (output is masked by default)
