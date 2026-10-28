@@ -1667,7 +1667,8 @@ servel access user create bob --role viewer --generate-key     # Generate keypai
 servel access user modify bob --ssh-key new.pub                # Rotate key; file, inline, or - read on your machine
 servel access user modify bob --rotate-key                     # Rotate key via prompt (runs on your machine)
 servel access scope add bob --server KN --permissions deploy  # Grant extra perms (row labelled KN)
-servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployment app
+servel access scope add bob --server KN --permissions deploy,logs --infra mydb --deployments app
+servel access scope add bob --server KN --deployments app --groups atlaspad   # REPLACES the row: pass --groups or the row loses them
 servel user show bob --json           # Verify: what bob ACTUALLY reaches (not just the stored rows)
 # Scope perms are ADDITIVE (extend role; never subtract). Fixes "your role X lacks Y permission"
 # without changing the user's global role. TRAP: all of a user's rows on a server apply TOGETHER —
