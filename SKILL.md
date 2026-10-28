@@ -946,6 +946,9 @@ servel infra reconcile my-supabase --service kong --only KONG_NGINX_WORKER_PROCE
                                       #   now pin 2; existing stacks need this reconcile (kong restarts once, ~180 MiB).
 servel infra customize db --service db --memory 4GB
 servel infra customize mysupabase --service meta --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"  # override broken template healthcheck probe (live-applies + survives recreate); 'none' disables; --clear-health reverts
+servel infra customize mysupabase --service kong --health-interval 30s --health-retries 3  # slow a too-frequent probe, keep the probe; also --health-timeout. Rolls ONLY that service, survives recreate, config-read tier (--health-cmd needs shell).
+                                      #   Unset fields get 30s/30s/3/30s, never the image's own (postgres-meta's image probe is `node -e fetch` every 5s: 7-16% of a core per idle stack, 2026-10-27).
+                                      #   Templates now reject a healthcheck without a test (partial checks used to fall back to the image probe silently).
 servel infra customize mysupabase --service rest --ulimit nofile=65536  # raise a per-service ulimit (soft = hard); rolls ONLY that service + survives recreate. PostgREST at the default soft nofile 1024 stops accepting under a client retry storm (agentkarma-db 2026-10-26: 'Warp: accept: resource exhausted', Kong upstream timeouts). Supabase v1/v2 templates now ship rest nofile 65536 (overrides.services.<svc>.ulimits); compose `ulimits` are honored (servel e8fa2f25+). Headroom, not a cure for an unbounded flood.
                                       # — per-service live apply: rolls ONLY db, not the other 12 services.
                                       #   Override persisted in spec; survives recreate.
