@@ -1252,7 +1252,8 @@ Defaults: zram **on** (lz4, 2G), disk swapfile **2G→8G elastic**, swappiness 1
 ### Secrets
 
 ```bash
-servel secrets set API_KEY            # Set (interactive prompt, never pass values inline)
+servel secrets set myapp API_KEY=...  # Set; app first works from any dir (searches other remotes if not on default). Several pairs = one write
+pbpaste | servel secrets set myapp API_KEY -   # stdin keeps the value out of shell history (no interactive prompt exists)
 servel secrets list                   # List keys
 servel secrets get API_KEY            # Get value (output is masked by default)
 servel secrets delete API_KEY         # Remove
@@ -2058,8 +2059,8 @@ servel deploy --verbose --preview
 #   API_URL: https://api.example.com
 
 # Option 2: servel secrets (encrypted, persistent, recommended for API keys)
-servel secrets set API_KEY             # Interactive prompt (recommended)
-servel secrets set DB_PASSWORD         # Never pass secret values inline
+pbpaste | servel secrets set myapp API_KEY -   # stdin (recommended: value stays out of argv/history)
+servel secrets set myapp DB_PASSWORD=...       # KEY=VALUE pairs, same shape as `servel env set`
 
 # Option 3: Auto-detect sensitive vars during deploy
 servel deploy --verbose --migrate-secrets
