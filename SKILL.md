@@ -385,11 +385,16 @@ Task -> What are you trying to do?
 |
 +- Add infrastructure -> servel add <type> --name <name>
 |   +- Bundle? -> servel add redis,postgres --prefix app
-|   +- Multi-service stack you do not fully use? -> servel add supabase db --without analytics,supavisor,realtime
+|   +- Supabase -> servel add supabase db   (2026-11-03: CORE ONLY by default = db,kong,auth,rest,storage)
+|      Opt in: --with realtime,studio (studio pulls meta; vector pulls analytics) | --full = all 13.
+|      Existing stacks keep their members; the default is read only when a stack is created.
+|      Running stack: servel infra update @db --plan (24h usage + keep/remove per member),
+|      --without analytics,vector (removes services, keeps volumes), --with realtime (creates only those).
+|   +- Multi-service stack you do not fully use? -> servel add supabase db --full --without analytics,supavisor,realtime
 |      (2026-09-20. Only services the template declares `optional_services:` can be declined —
 |       `--without db` fails at the CLI, not at 3am. Persisted to spec.json, so it survives a
 |       recreate, unlike `servel scale @stack/svc 0`. Supabase optional: analytics, supavisor,
-|       realtime, imgproxy, studio, functions. NOT `--tier`, which is validated, echoed,
+|       realtime, imgproxy, studio, functions, vector, meta. NOT `--tier`, which is validated, echoed,
 |       forwarded and never read.)
 |      Templates may declare a `connection_budget:`; a stack whose pools + app headroom exceed
 |      max_connections is REFUSED at provision time with the arithmetic. Declined services do
@@ -655,8 +660,9 @@ servel scale @stack/service 0         # Park ONE service of a multi-service stac
                                       # One `docker service scale`, no re-render, no db
                                       # restart. The daemon reads replicas=0 as operator
                                       # intent and will NOT revert it. Does NOT survive a
-                                      # full re-render — use `servel add --without` for
-                                      # a permanent decline.
+                                      # full re-render — use `servel infra update @stack
+                                      # --without svc` (or `add --without`) for a
+                                      # permanent decline.
 servel restart <name>                 # Restart deployment
 servel stop <name>                    # Stop deployment (scales to 0)
 servel start <name>                   # Start stopped deployment
