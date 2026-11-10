@@ -888,18 +888,20 @@ Create a backup archive containing deployments, infrastructure, and optionally v
 servel backup [server-name|@infra-name] [flags]
 ```
 
+With `@infra-name` the flags below are rejected (`-o`, `--passphrase`, `--include-data`, `--deployments`, `--infrastructure`, `--skip-encryption`); the error points to `servel infra backup`.
+
 | Flag | Description |
 |---|---|
 | `--deployments` `strings` | Specific deployments to backup (comma-separated, default: all) |
 | `--include-data` | Include volume data (increases backup size) |
 | `--infrastructure` `strings` | Specific infrastructure to backup (comma-separated, default: all) |
-| `--output` / `-o` `string` | Output path for backup archive (default: servel-backup-&#123;timestamp&#125;.tar.gz[.age]) |
+| `--output` / `-o` `string` | Output path for backup archive (default: `./servel-backup-YYYYMMDD-HHMMSS.tar.gz.age`, or `.tar.gz` with `--skip-encryption`) |
 | `--passphrase` `string` | Encryption passphrase (will prompt if not provided) |
 | `--skip-encryption` | Skip encryption (not recommended) |
 
 ### servel ban
 
-Ban an IP address or CIDR range, either server-wide or for a specific deployment.
+Ban an IP address or CIDR range, either server-wide or for a specific deployment. A deployment target must be a DNS label.
 
 ```bash
 servel ban [target] <ip|cidr> [flags]
@@ -1003,7 +1005,7 @@ servel bastion server add <name> <user@host> [flags]
 |---|---|
 | `--description` `string` | Server description |
 | `--ephemeral` `string` | Ephemeral user mode: disabled\|fallback\|required (default "disabled") |
-| `--fingerprint` `string` | Expected host key fingerprint (SHA256) |
+| `--fingerprint` `string` | Expected host key fingerprint (SHA256). Required unless the host is already in known_hosts; connecting without one is refused |
 | `--key` `string` | Path to SSH private key |
 | `--port` `int` | SSH port (default 22) |
 
@@ -1662,9 +1664,9 @@ servel ci server start [flags]
 | Flag | Description |
 |---|---|
 | `--burst` `int` | rate limit burst size (default 20) |
-| `--domain` `string` | domain for webhook routing (auto-creates Traefik route) |
+| `--domain` `string` | domain for webhook routing (auto-creates Traefik route; only `/webhook/*` is routed) |
 | `--no-ssl` | disable SSL (use HTTP only) |
-| `--port` `int` | HTTP port for webhook server (default 8081) |
+| `--port` `int` | local HTTP port; the server binds 127.0.0.1 (default 8081) |
 | `--rate-limit` `float` | requests per second per IP (default 10) |
 | `--workers` `int` | number of concurrent job workers (default 2) |
 
@@ -2214,6 +2216,7 @@ servel deploy [path|alias] [flags]
 | `--build-env` `stringArray` | build-time env var KEY=VALUE, repeatable (e.g. --build-env SITE_ORIGIN=https://example.com); visible to the build itself, baked into the image — not for secrets |
 | `--build-memory` `string` | build memory limit (e.g., '4g', '2048m') - default: auto-calculated |
 | `--build-on` `string` | build on specific node (hostname or node ID prefix) - auto-selects node with most RAM if not specified |
+| `--build-timeout` `string` | max build time (e.g. '45m', '2h', 'none' for no limit); overrides servel.yaml build_timeout (default "30m") |
 | `--build-type` `string` | override build type detection (dockerfile, compose, nixpacks) |
 | `--cache-fallback` `string` | fallback deployment name for cache lookup (auto-set for preview) |
 | `--cache-from` `string` | use image as build cache (e.g., myapp:latest) |
@@ -2484,7 +2487,7 @@ servel dns [command]
 
 ### servel dns verify
 
-Check if a DNS record exists and points to the correct server
+Check if a DNS record exists and points to the correct server. Works from a client: the check re-runs on the server.
 
 ```bash
 servel dns verify <domain> [flags]
@@ -2719,24 +2722,18 @@ servel events [app] [flags]
 
 ### servel exec
 
-Execute a command in a running container for a deployed application.
+Run a predefined action from servel.yaml in the deployed container.
 
 ```bash
-servel exec [app] [command...] [flags]
+servel run <action> [flags]
 ```
-
-**Aliases:** exec, x, run
 
 | Flag | Description |
 |---|---|
-| `--env` `string` | environment to exec into |
-| `--replica` `int` | replica index to exec into (0 = first running) |
-| `--service` `string` | service to exec into (for multi-service deployments) |
-| `--shell` | start an interactive shell (sh) |
-| `--stdin` | pipe stdin to container (for non-interactive input) |
-| `--target` `string` | explicit deployment target (bypasses auto-detection from .servel/state.json) |
-| `--timeout` `duration` | timeout for non-interactive commands (e.g., 30s, 5m) |
-| `--user` `string` | run as specific user |
+| `--dry-run` | preview command without executing |
+| `--env` `string` | environment to run in |
+| `--no-output` | skip output file sync |
+| `--service` `string` | service to run in (for multi-service deployments) |
 | `--workdir` `string` | working directory inside container |
 
 ### servel find
@@ -2835,7 +2832,6 @@ servel import vercel [project-slug...] [flags]
 | Flag | Description |
 |---|---|
 | `--all` | import every project visible to the token |
-| `--clone` | (reserved) clone the linked git repo into the workspace; not implemented yet |
 | `--concurrency` `int` | max parallel project fetches (default 4) |
 | `--overwrite` | replace an existing staging dir for the same project |
 | `--target` `string` | env target to write to secrets.env: production, preview, development (default "production") |
@@ -3170,15 +3166,13 @@ Rename an infrastructure component.
 servel infra rename <old-name> <new-name> [flags]
 ```
 
-**Aliases:** rename, mv, move
-
 | Flag | Description |
 |---|---|
 | `--force` / `-f` | Skip confirmation prompt |
 
 ### servel infra repair
 
-Diagnose and automatically repair common infrastructure issues.
+Diagnose common infrastructure issues. Read-only report by default; `--force` applies repairs.
 
 ```bash
 servel infra repair [name] [flags]
@@ -3186,8 +3180,8 @@ servel infra repair [name] [flags]
 
 | Flag | Description |
 |---|---|
-| `--dry-run` | Preview repairs without applying |
-| `--force` / `-f` | Skip confirmations |
+| `--dry-run` | Report only (the default without `--force`). Wins over `--force` |
+| `--force` / `-f` | Apply repairs |
 
 ### servel infra restart
 
@@ -4006,7 +4000,6 @@ servel node rename-all <base> [flags]
 
 | Flag | Description |
 |---|---|
-| `--apply-hostname` | (reserved) also rename OS hostnames — currently refused |
 | `--auto` | skip the interactive review; apply &lt;base&gt;-N defaults directly |
 | `--reset` | remove all node aliases (no &lt;base&gt; argument) |
 | `--yes` / `-y` | skip the final apply confirmation |
@@ -5517,7 +5510,7 @@ servel restore [server-name] [flags]
 
 ### servel resume
 
-Resume a failed deployment from where it left off.
+Resume a failed deployment from where it left off. Pick the server with global `-r/--remote <name>`.
 
 ```bash
 servel resume [deployment-name] [flags]
@@ -5526,7 +5519,6 @@ servel resume [deployment-name] [flags]
 | Flag | Description |
 |---|---|
 | `--convergence-timeout` `string` | time to wait for convergence (default "5m") |
-| `--server` / `-s` `string` | server to resume on |
 | `--skip-convergence` | skip convergence verification |
 | `--verbose` / `-v` | show verbose output |
 
@@ -5560,15 +5552,13 @@ List all Traefik routes from both file-based and label-based sources.
 servel routes [deployment] [flags]
 ```
 
-**Aliases:** routes, ls
-
 | Flag | Description |
 |---|---|
 | `--env` `string` | Filter by environment |
 
 ### servel routes debug
 
-Show detailed information about a specific domain's routing configuration.
+Show detailed information about a specific domain's routing configuration. Basic-auth label values are shown as `<redacted>`.
 
 ```bash
 servel routes debug <domain> [flags]
@@ -5582,7 +5572,7 @@ Execute a command in a running container for a deployed application.
 servel exec [app] [command...] [flags]
 ```
 
-**Aliases:** exec, x, run
+**Aliases:** exec, x
 
 | Flag | Description |
 |---|---|
@@ -5926,7 +5916,7 @@ servel set-env-file <file> [flags]
 
 ### servel ssh
 
-Open an SSH connection to a configured server, or execute a command remotely.
+Open an SSH connection to a configured server, or execute a command remotely. `servel ssh <server> <words>` without `-c "cmd"` or `-- cmd` is an error.
 
 ```bash
 servel ssh [server-name] [-- command...] [flags]
@@ -6273,14 +6263,6 @@ servel tunnel list [flags]
 
 **Aliases:** list, ls
 
-### servel tunnel logs
-
-View connection logs for a tunnel.
-
-```bash
-servel tunnel logs <tunnel-id> [flags]
-```
-
 ### servel tunnel start
 
 Start a new development tunnel to expose a local port.
@@ -6294,7 +6276,6 @@ servel tunnel start <local-port> [flags]
 | `--auth` `string` | basic auth (format: username:password) |
 | `--domain` / `-d` `string` | custom subdomain (e.g., my-api) |
 | `--persistent` | run tunnel in background (persistent mode) |
-| `--server` `string` | target server name |
 | `--ttl` `string` | auto-cleanup after duration (e.g., 1h, 24h, 7d) - requires --persistent |
 
 ### servel tunnel stop
@@ -6351,7 +6332,7 @@ servel untag <target> <tag> [<tag>...] [flags]
 
 ### servel upgrade
 
-Upgrade servel to the latest version from servel.dev.
+Upgrade servel to the latest version from servel.dev. On a signed build, a release entry without checksum or signature is refused (including `--version` to an old unsigned release).
 
 ```bash
 servel upgrade [flags]
@@ -6629,7 +6610,6 @@ servel verify cf-ssl [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show insecure CF SSL modes |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify config
 
@@ -6643,7 +6623,6 @@ servel verify config [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with config drift |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify dependencies
 
@@ -6657,7 +6636,6 @@ servel verify dependencies [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with dependency issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify dns
 
@@ -6671,7 +6649,6 @@ servel verify dns [domain|project-name...] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with DNS issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify health
 
@@ -6685,7 +6662,6 @@ servel verify health [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show unhealthy deployments |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify noindex
 
@@ -6700,7 +6676,6 @@ servel verify noindex [project-name] [flags]
 | `--all` | explicitly check all deployments (default) |
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify resources
 
@@ -6714,7 +6689,6 @@ servel verify resources [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with resource issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify routing
 
@@ -6728,7 +6702,6 @@ servel verify routing [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show deployments with routing issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel verify ssl
 
@@ -6742,7 +6715,6 @@ servel verify ssl [project-name] [flags]
 |---|---|
 | `--json` | output as JSON |
 | `--quiet` | only show certificate issues |
-| `--server` `string` | target server (default: current default) |
 
 ### servel version
 

@@ -81,7 +81,7 @@ Raw `ssh user@host -- docker ...` skips all of the above. State, audit, multi-no
 | Manual `rsync` of Docker volumes between nodes | `servel move @<infra> --to <node> --fast` |
 | CI should build, cluster only pulls | `image: auto` (or `--image auto` / `SERVEL_IMAGE=auto`) + `servel ci setup github-actions` (one-time admin step: `servel auth registry add ghcr.io --token <PAT with read:packages>`) |
 | Deploy an image that is already built | `servel deploy --image ghcr.io/owner/app:<sha>` (or `image:` with a tag in servel.yaml) |
-| A repo with no GitHub/GitLab CI, or tests/builds that must run on the server | Built-in CI: `servel ci pipeline-init` (writes `.servel-ci.yml`) → `servel ci run` (runs on the server over SSH); `servel ci pipelines add` + `servel ci webhook <p>` for push-triggered runs. External CI instead: `servel ci setup github-actions` |
+| A repo with no GitHub/GitLab CI, or tests/builds that must run on the server | Built-in CI: `servel ci pipeline-init` (writes `.servel-ci.yml`) → `servel ci run` (runs on the server over SSH); `servel ci pipelines add` + `servel ci webhook <p>` for push-triggered runs (webhooks are signature-verified; a pipeline without a secret gets 401 — re-register it and paste the printed secret into the git provider). External CI instead: `servel ci setup github-actions` |
 | `docker service update --constraint-add node.hostname==` for stateful | `servel move @<infra> --to <node>` (moves data too) |
 | Moving one stateless member of a stack (`docker service update` on supabase-rest) | `servel move @<stack>/<member> --to <node> [--plan]` (refuses data members; keeps supavisor with db unless `--allow-split`; copies config files first; survives redeploys) |
 | Manually checking 5 subsystems with separate commands | `servel dashboard` (one screen — every optional subsystem) |
@@ -133,7 +133,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `preview` | Create a TTL'd preview deployment. |
 | `attach` / `watch` | Watch in-flight build (raw log stream vs. phase TUI). |
 | `abort` | Cancel in-progress deploy: the server stops the app's running deploy job (`servel deploy --stop-running --name <app>`), then the deployment record is cleaned. Works before the record exists and through a deploy key scoped to the app (own jobs, or any job of the app with `update`; either way only in environments the key's scope covers — checked per job against the env recorded at launch). |
-| `resume` | Continue failed deploy from last successful step. |
+| `resume` | Continue failed deploy from last successful step. Server: global `-r/--remote` (no `-s`). |
 
 ### Inspect / observe
 | Command | What it does |
@@ -159,11 +159,11 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | Command | What it does |
 |---|---|
 | `exec <addr> [sh|-- cmd]` | Cross-node-correct (SSH-hops to node hosting the container). **Agent-safe: `-- <cmd>` needs no TTY** — a pseudo-terminal is requested only when stdin AND stdout are real terminals, or `--shell` was passed. Do NOT add `--stdin < /dev/null` to work around a TTY error; `--stdin` is only for actually piping data in. `--timeout` applies to every non-terminal exec. Gated keys need `shell` for exec, `--timeout` included (the gate reads `timeout N docker exec` as the exec itself; deployer has no `shell`). From a real terminal, `--shell` / bare `sh` open a PTY-backed session (cross-node included). |
-| `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** |
+| `ssh <server>` | Server SSH. **Diagnostic shells only — not a docker proxy.** One server name only: a command needs `-c "cmd"` or `-- cmd`; `servel ssh KN df -h` is an error. |
 | `attach` | Stream live build log (Ctrl+C detaches, build continues). |
 | `debug-shell <app>` | Shell into rootfs snapshot of last crashed task. |
 | `port-forward <target>[=local] [local-port]` | SSH tunnel to a remote service. `list`, `stop`. `@infra` resolves like `exec`/`logs` (canonical `servel-infra-<name>-<type>`, legacy bare, multi-service via `@infra/svc` or `--service`; a full Swarm service name also works) in foreground, `--detach` and `-- cmd` modes; ambiguous names error with the candidates (fixed 2026-10-11). Gated users need `port-forward`; scoped (name-restricted) users can forward only to their own deployments/infra, and `~traefik`/registry are denied (they may read `~x` via logs/inspect, never exec/restart/scale it; every operand of a command is scope-checked, raw docker/path commands included — see [ACCESS.md](references/ACCESS.md#scope-model)); their authorized_keys line allows native forwarding to `localhost:*` only (raw `ssh -L` elsewhere is refused) — [ACCESS.md](references/ACCESS.md#team-authorized_keys-lines-native-forwarding). |
-| `tunnel start <local-port>` | Public dev tunnels. `list`, `logs`, `stop`. |
+| `tunnel start <local-port>` | Public dev tunnels. `list`, `stop`. Server: global `-r/--remote`. |
 | `connect <name>` | Print infra connection details (URL, user, password). `--open` launches the web dashboard in the browser, logged in automatically for basic-auth dashboards (e.g. Supabase Studio). |
 
 ### Infrastructure (`servel infra ...` + `servel add`)
@@ -172,7 +172,7 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 | `add <type> [name]` | Add infra from hub template (46 types: postgres, redis, mongodb, supabase, chatwoot, openreplay, ...). Supports `--ha`, `--replicated`, `--prefix` bundles. |
 | `infra` (no args) | List all infra. |
 | `infra check [--all-nodes]` | Diagnose orphans / conflicts / stuck services / **Postgres connection saturation** (≥90% of `max_connections` = critical, SQLSTATE 53300 — catches the "auth/DB connection error" class on Supabase/postgres stacks). Also **ClickHouse system-log bloat** (G.2): any `clickhouse`/`openreplay`/`highlight` infra whose own `system.*` tables hold ≥20% of their volume (≥40% = error, 2 GiB floor). |
-| `infra repair @<name>` | Auto-rsync bind sources, alert on drift. |
+| `infra repair [@<name>]` | READ-ONLY report by default. `--force` applies repairs (auto-rsync bind sources); `--dry-run` wins over `--force`. |
 | `infra reconcile <name> [--dry-run]` | Re-apply the template's ENV to an already-deployed instance (closes template drift). `--dry-run` first — prints the per-service diff. Never regenerates existing secrets, never reverts operator pins, never deletes keys. Env only: images → `infra upgrade`, volumes/file_templates → recreate. |
 | `infra backup / restore` | Per-infra backup. |
 | `infra sql @<name> [file|dir]` | Run SQL (file, directory of migrations, or interactive shell). Discovers container via `docker service ls`. Directory input is tracked by default (`--no-track` to opt out); `--baseline` adopts tracking on a DB whose schema already exists. |
@@ -189,14 +189,14 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 ### Import / migration from other platforms
 | Command | What it does |
 |---|---|
-| `import vercel [slug...]` | Pull Vercel projects (decrypted envs + domains + framework + build overrides) into a staging dir at `~/servel-imports/<scope>/<slug>/`. Read-only against your FS by default; emits `servel.yaml`, `IMPORT.md` (recipe + DNS deltas + storage hints), `secrets.env` (0600). `--all` for whole-team imports, `--team`, `--token` / `$VERCEL_TOKEN`, `--target {production,preview,development}`, `--workspace`, `--concurrency`, `--overwrite`. `--clone` flag is reserved (returns error) — clone manually then `cp servel.yaml` into the repo. Storage envs (POSTGRES_URL, KV_URL, BLOB_READ_WRITE_TOKEN, EDGE_CONFIG) become recommendations, never auto-provisioned. |
+| `import vercel [slug...]` | Pull Vercel projects (decrypted envs + domains + framework + build overrides) into a staging dir at `~/servel-imports/<scope>/<slug>/`. Read-only against your FS by default; emits `servel.yaml`, `IMPORT.md` (recipe + DNS deltas + storage hints), `secrets.env` (0600). `--all` for whole-team imports, `--team`, `--token` / `$VERCEL_TOKEN`, `--target {production,preview,development}`, `--workspace`, `--concurrency`, `--overwrite`. The import does not clone the repo — clone manually then `cp servel.yaml` into the repo. Storage envs (POSTGRES_URL, KV_URL, BLOB_READ_WRITE_TOKEN, EDGE_CONFIG) become recommendations, never auto-provisioned. |
 
 ### Data / state / volumes / migration
 | Command | What it does |
 |---|---|
 | `data bind / unbind / heal / migrate / status / check` | Per-service data binding (which node holds the data). `data volumes` (move/share/replicate/shard) was REMOVED 2026-10 — use `servel move` / `infra add --replicated`. |
 | `move @<infra> --to <node>` | Cross-node migration (auto-picks `replicated` / `snapshot` / `fullcopy`). `--plan`, `--fast`, `--pointer-only`. Snapshot ships the one named volume the service mounts (read from its spec); two volumes are refused (use `--strategy fullcopy`). Every strategy, `--plan` and `--cleanup` act on the volumes the service spec mounts (postgres `lokal` → `lokal-var-lib-postgresql-data`) plus owned `servel-infra-<name>[-*]`; never a sibling's (`lokal-quota`) volumes or services. Refuses if none of them is on the source. Without `--cleanup` the source keeps a stale copy; `infra rm --volumes` there refuses (data node is the target). |
-| `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. |
+| `move @<infra> --to-remote <r> --to <n>` | **Cross-remote migration** (different operator-managed remote). `--plan` always safe; execution gated behind `SERVEL_EXPERIMENTAL_CROSS_REMOTE=1`. Single + multi-service supported. Pulls each image on the target node BEFORE stopping the source (10 min per image; a failed pull stops before touching the source); each moved service gets 5 min to start — on timeout the target is left at 0 replicas and the source is restarted. |
 | `move @<infra> --to-remote <r> --abort` | Cross-remote: idempotent cleanup of partial state on both remotes after a failed migration. Restarts source if stopped. |
 | `move @<infra> --to-remote <r> --commit-source-cleanup` | Cross-remote: drop source after successful migration. Refuses if target isn't serving. |
 | `move history` | Audit trail of past migrations (intra-swarm AND cross-remote). |
@@ -217,10 +217,10 @@ The full top-level command set (from `servel --help`, current as of 2026-05-17).
 |---|---|
 | `domains [list|add|remove|update|status|redirect|list-redirects|remove-redirect]` | Domain + SSL + redirect management. |
 | `domains claim [deployment]` | Claim (or retry) the **magic subdomain** for a deployment. Domainless deploys auto-claim `https://<app>-<hash6>.<magic-domain>` (hash6 = derived from the server's identity key); a failed claim NEVER fails the deploy — it prints `subdomain pending — retry: servel domains claim <name>` and the daemon retries in the background (budget 3/day per marker). This verb is the manual retry; idempotent for the owning server. Auto-detects the deployment from `.servel/state.json`; `--env` for env-scoped deployments. Requires a server binary with subdomain support (`servel upgrade-servers` if it errors with "unknown command"). |
-| `dns [verify|cleanup]` | DNS record verification + cleanup. |
+| `dns [verify|cleanup]` | DNS record verification + cleanup. `dns verify <domain>` works from a client (re-runs on the server). |
 | `traefik [status|logs|restart|routes|certs|test|debug|pin|unpin|where]` | Traefik introspection + control. |
-| `routes [debug]` | Route-level debugging. |
-| `verify [cf-ssl|...]` | SSL/DNS/health sanity checks. |
+| `routes [debug]` | Route-level debugging (no `ls` alias; one server query). `routes debug` shows basic-auth label values as `<redacted>`. |
+| `verify [cf-ssl|...]` | SSL/DNS/health sanity checks. Server: global `-r/--remote <name>` (no per-command server flag). |
 | `verify cf-ssl` | Cloudflare SSL-mode probe (Full strict / Full / Flexible / Off). |
 | `cf token {set|unset|verify}` | Save / clear / verify a CF API token. Stored Age-encrypted server-side at `/var/servel/secrets/cf_token.age`. Required permissions: `Zone:Zone:Read`, `Zone:Zone Settings:Edit`, `Zone:SSL and Certificates:Edit`, `Zone:DNS:Edit` (last one optional). Use `--stdin` to pipe and avoid shell history capture. |
 | `cf zones [--json]` | List zones the token can see. |
@@ -270,8 +270,8 @@ TTY prints a stderr warning (piped/scripted use stays silent). Never logged. Des
 |---|---|
 | `auth [enable|disable|update|status|login|logout|whoami|registry]` | BasicAuth on deployments + CLI identity + Docker registry creds. |
 | `access [user|role|scope|permissions|setup|invite|join|leave|token|request|audit|request-hint]` | Multi-user team access + ACL. Gate path tiers: a host path the gate has no tier for fails closed — reading its contents needs `secrets-read`, per-process `/proc/...` needs `shell-root`, `ls`/`stat`/`find` walks need `config-read` (see `references/ACCESS.md`). |
-| `ban <ip|name>` / `unban` / `ban [ls|clear|sync]` | Server-wide and per-deployment IP bans (Traefik denyip plugin). |
-| `bastion [init|install|uninstall|start|stop|restart|status|sessions|kick|session [list|play|info|commands]]` | SSH bastion with session recording. |
+| `ban <ip|name>` / `unban` / `ban [ls|clear|sync]` | Server-wide and per-deployment IP bans (Traefik denyip plugin). A deployment target must be a DNS label. |
+| `bastion [init|install|uninstall|start|stop|restart|status|sessions|kick|server add|session [list|play|info|commands]]` | SSH bastion with session recording. `bastion server add <name> <user@host> --fingerprint SHA256:<h>` — a target with no fingerprint and no known_hosts entry is refused at connect. |
 | `audit [list|stats|export|rotate]` | Audit log (forensics-grade who/what/when). Carries `user` (authenticated principal) + `operator`/`operator_email` (self-declared identity from `config set user.*`); destructive commands require the latter. |
 
 ### CI / CD / jobs / deps
@@ -331,9 +331,9 @@ servel job doctor --keep   # leave probe on failure for debugging
 ### Backups
 | Command | What it does |
 |---|---|
-| `backup [server|@infra]` | Backup archive of server or infra. Takes a SERVER NAME, not a subcommand — there is no `backup ls` (use `restic ls`); an unknown name fails immediately listing configured remotes, with no passphrase prompt. |
+| `backup [server|@infra]` | Backup archive of a server (default file `./servel-backup-YYYYMMDD-HHMMSS.tar.gz.age`, `.tar.gz` with `--skip-encryption`). `backup @infra` rejects `-o`/`--passphrase`/`--include-data`/`--deployments`/`--infrastructure`/`--skip-encryption` and points to `servel infra backup`. Takes a SERVER NAME, not a subcommand — there is no `backup ls` (use `restic ls`); an unknown name fails immediately listing configured remotes, with no passphrase prompt. |
 | `restore <file>` | Restore a backup archive. |
-| `restic [backup|restore|ls|status|config|install|schedule|repos|rclone]` | Restic-based incremental backups (the modern path). |
+| `restic [backup|restore|ls|status|config|install|schedule|repos|rclone]` | Restic-based incremental backups (the modern path). Schedule cron weekday field accepts ranges/lists (`0 3 * * 1-5`, `1,3,5`) and runs only on those days; weekday steps are rejected. |
 | `infra backup <name>` / `infra restore <name>` | Per-infra (pg_dump-aware for postgres, supabase). |
 
 ### Dev mode / local
@@ -430,7 +430,7 @@ Task -> What are you trying to do?
 |
 +- Backup/restore -> servel infra backup <name> | servel infra restore <name> <file>
 |
-+- Drift / silent state issues -> servel infra check --all-nodes (cluster sweep) | servel infra repair @<name> (auto-rsync bind sources, alert on spec/state drift)
++- Drift / silent state issues -> servel infra check --all-nodes (cluster sweep) | servel infra repair @<name> (read-only report; add --force to auto-rsync bind sources)
 |   +- Bind-mount source missing on worker (post-rejoin / OS-reinstall)? -> auto-fixed by daemon on schedule + on node-rejoin events
 |   +- Manual `docker service update --mount-add` polluted live spec? -> alert-only; never auto-reverted
 |   +- meta.json says running but 0 replicas, or stale target_node_id? -> alert-only; operator decides
@@ -742,6 +742,7 @@ Node preset = Node 22 LTS (`node:22-alpine`; Next standalone on Bun runs `node:2
 - `--quiet, -q` -- Minimal output (only final result)
 - `--dashboard` -- Real-time TUI dashboard
 - `--env` -- Target environment
+- `--build-timeout <dur>` -- Max build time (default `30m`, `none` = no limit). Without the flag, servel.yaml `build_timeout` applies.
 - `--build-on <node>` -- Build on specific node. **Managers are excluded from auto-selection whenever a worker is eligible (2026-09-20)** — a build is the heaviest thing servel runs and the manager is the node whose loss takes the cluster with it. `--build-on` still wins (naming a host is intent), and it now WARNS when it is dropped instead of being silently discarded. **Builds now actually run on the selected node (2026-09-20):** a server-side deploy hops one SSH from the manager to the chosen worker, streams the context in, and builds there. Previously the selected node was printed and IGNORED — every server-side build ran wherever the deploy happened to be, i.e. the manager. A deploy that selected a remote host it genuinely cannot reach REFUSES and names `--local-build`, rather than quietly building on the wrong node. The hop needs `ssh -o BatchMode=yes <worker> true` to work from the manager, which `servel node add` already sets up. **Auto-selection also gates on disk before ranking on RAM:** a candidate at >=90% used (df semantics) is skipped with `disk gate skipped <host> at N% (>=90% used)`; an UNMEASURED node is neutral (never excluded); if every candidate is over the ceiling the least-full one is used anyway. The gate only re-routes — the >=95% preflight is still the only thing that BLOCKS a deploy (`--force-low-disk` overrides that, 85-94% only warns).
 - `--local-build` -- Build locally, push to the server's registry
 - `--image <auto|registry/path|registry/path:tag>` -- CI-built image mode (cluster only pulls); see "CI-Built Images". Also `servel.yaml` `image:` / env `SERVEL_IMAGE` (flag > env > file). Excludes `--local-build` and `--reuse-image`
@@ -787,7 +788,7 @@ migrations:
 ### Package Selection (what gets shipped)
 
 Build context exclusion layers (later overrides earlier):
-1. Built-in `DeployExclusions` (`.git`, `node_modules`, `.next`, `dist`, `build`, `vendor`, `.env*`, `*.log`, `coverage`...)
+1. Built-in `DeployExclusions` (`.git`, `node_modules`, `.next`, `dist`, `build`, `vendor`, `.env*`, `*.log`, `coverage`...). Names match WHOLE path segments: `build` drops `build/` but not `build.rs` or `builder/`; `.git` keeps `.github/`; `out` keeps `output/`. Root `.env*` still excluded
 2. `.gitignore` (honored automatically in git repos)
 3. **`.servelignore`** -- gitignore-style file at project root; always loaded. Use for git-tracked-but-don't-ship paths (e.g. `target/` build artifacts):
    ```
@@ -1022,8 +1023,9 @@ servel infra check --all-nodes        # Cluster-wide resilience scan across ever
 #   B.4 undersized secret · B.5 missing servel.managed label · B.6 stateful safety floors
 #   G.1 Postgres near max_connections · G.2 ClickHouse system.* log bloat
 # All detect-and-alert; none mutate. Full descriptions: `servel infra check --help`.
-servel infra repair @mydb             # Auto-rsync missing bind sources; coalesce duplicate node pins (`multiple_node_pins`); alert on spec/state drift (resilience layer)
-servel infra repair @mydb --dry-run   # Preview what the resilience layer would auto-repair
+servel infra repair @mydb             # READ-ONLY report of what the resilience layer found (hints say --force)
+servel infra repair @mydb --force     # Apply: auto-rsync missing bind sources; coalesce duplicate node pins (`multiple_node_pins`). Spec/state drift stays alert-only
+servel infra repair @mydb --dry-run   # Report only; wins over --force
 servel infra sql @mydb schema.sql     # Run SQL file against database (raw; single files aren't tracked by default)
 servel infra sql @mydb ./migrations   # Run all .sql files in directory, alphabetical order, TRACKED BY DEFAULT (skips already-applied)
 servel infra sql @mydb "SELECT 1"     # Run inline SQL
@@ -1210,7 +1212,7 @@ servel node label <hostname> key=val  # Add/remove node labels
 Signed self-upgrade for the CLI, daemon, and configured remotes. Notify-only by default; opt in to auto-apply per machine. See [AUTO_UPDATE.md](references/AUTO_UPDATE.md) for the full pipeline (sha256 + ed25519 verification, key rotation, daemon notifier, rolling fleet upgrades).
 
 ```bash
-servel upgrade                        # self-upgrade CLI (verify → stage .next → smoke → swap → probation)
+servel upgrade                        # self-upgrade CLI (verify → stage .next → smoke → swap → probation). Signed build REFUSES a release entry without checksum/signature (also `--version <old unsigned>`)
 servel upgrade --check                # check only, no install
 servel upgrade --no-twin              # skip twin-serving probation; direct verified swap (escape hatch)
 servel upgrade --rollback             # restore previously-installed binary
@@ -1304,6 +1306,7 @@ Default is **merge**; `--replace` for full replacement. Values never touch disk 
 
 ```bash
 servel domains add myapp app.com      # Add domain (auto-SSL)
+                                      # Domains with a backtick, quote, parenthesis, | & or whitespace are rejected everywhere (servel.yaml, domains add/update/redirect, infra domains, subdomain claim, ci server --domain)
 servel domains claim [myapp]          # Claim/retry the magic subdomain (domainless deploys auto-claim;
                                       # this is the manual retry after "subdomain pending"). Idempotent.
 servel domains ls                     # List all domains
@@ -1582,6 +1585,7 @@ servel alerts add slack               # Add Slack channel
 servel alerts add discord             # Add Discord channel
 servel alerts add webhook             # Add webhook
 servel alerts test                    # Test notifications
+# Daemon safety limits + audit (/var/servel/audit/): stateful auto-move runs off the tick, killed + recorded `failed` after 6h; constraint re-pin budget 20/hour cluster-wide + 15-service mass-drift breaker (audit `infra.constraint_repair` / `infra.constraint_repair_declined`); stale builds -> `deploy.stale_build_failed`; a corrupt routing-state or version-pin ledger pauses that repair class 24h with an audit entry.
 # Node overload (daemon, default-on): ONE detector for every node incl. the manager. Signal = CPU pressure (PSI /proc/pressure/cpu some avg300: % of time a task waited for a CPU; per-machine by construction), fallback 5-min load per core on kernels without PSI. Line is PER NODE and learned: 7-day p95 of CALM checks x1.3, clamped 10-25% (load 1.0-2.0/core); 20% (2.0) until 1 day of history; chronic overload can't become normal. Signal >= line OR busy >=90% on every check for 15m → `node_overloaded` (critical, re-pages hourly for a day); recovers after 2 checks under 60% of the line. First check runs at daemon start (own loop, not gated on startup). Alert lists top-5 containers in cores (falls back to the last 5-min service_stats sample when docker stats times out, labeled with its age), containers THROTTLED by their own cpu limit (cpu.stat: >=1/5 periods or >=1/4 run time over 5s; fix = raise `cpus` or `cpus: none` — moving won't help), a core with softirq >=2x average (single RX queue, RPS off), a kernel/docker/disk overhead line (kernel time, softirq, I/O stall, zombies) and TEXT-ONLY move suggestions: movable / pinned by data / needs check / not movable, with `servel move <app> --to <node>` or, for a stack member without data, `servel move @stack/<member> --to <node>`. Nothing auto-moves. See lines: `servel ssh KN -c 'servel daemon status'` (Node Load table). Fixed line for all nodes: `servel daemon config set cluster_overload_psi_pct=15` (0 = learn again; also `cluster_overload_load_per_core`, `cluster_overload_busy_pct`, `cluster_overload_window`, all live). Replaces cpu_high for node CPU. Overloaded nodes, manager included, are refused as rebalance targets.
 # Outside-in probes (daemon, default-on): every routed public domain HEAD-probed via real DNS/CDN every 5min; any HTTP status = reachable, transport failures + expired certs = down; 3 strikes → domain_unreachable alert (domain→service→node). Skip: `docker service update --label-add servel.probe.skip=true <svc>`; disable: `servel daemon config set domain_probes_enabled=false`. Catches the inside-checks-green-but-world-sees-down class.
 # Backups default-on (daemon): stateful infra auto-enrolled into daily restic schedules (opt-out: infra backup.auto_enroll:false / backup_auto_enroll_enabled=false); restic auto-installed when missing; weekly restic check + monthly restore-to-scratch drill — backup_verify_failed alert = your safety net is broken, act.
@@ -1648,7 +1652,10 @@ servel ci logs <run-id>               # View CI logs
 servel ci recent                      # Recent runs
 servel ci cancel <run-id>             # Cancel run
 servel ci retry <run-id>              # Retry run
+servel ci server start --domain ci.example.com  # Webhook receiver
 ```
+
+**CI server security model.** Binds `127.0.0.1` only (plus the Docker gateway IP with `--domain`); `--domain` routes ONLY `/webhook/*`. `/api/*` needs `Authorization: Bearer <token>` from `/var/servel/ci/api-token` (0600, generated on first start; rotate = delete file + restart); API responses redact webhook secret, deploy key and env values. Webhooks are signature-checked against the pipeline secret: GitHub `X-Hub-Signature-256`, generic `X-Signature: sha256=<hex HMAC-SHA256 of body>`; bad signature or a pipeline with no secret → 401; body > 10 MB → 413. Secretless pipeline fix: `servel ci pipelines add <name>` again, then enter the printed secret in the git provider's webhook settings. Webhook URL is `https://<domain>/webhook/<provider>` (no port). Logs are 0600; masking = declared `secrets:` + name heuristic.
 
 ### Access Control
 
@@ -1694,7 +1701,7 @@ servel access role                    # Role management
 servel access setup                   # Initialize access control on server
 servel access setup --rotate-join-key # Rotate join key
 servel access invite --role deployer   # Generate invite token
-servel access invite --embed          # Write invite token to .servel/access.yaml
+servel access invite --embed          # Write invite token to .servel/access.yaml (0600; do NOT commit it)
 servel access invite ls               # List pending invites (`list` alias). Any other word after `invite` is refused; only bare `invite` creates
 servel access invite revoke <id>      # Revoke invite; also removes the `ci-*` users it created (their key came from the token). People who joined with own keys are listed and keep access (`servel access user rm <name>`)
 servel access invite rotate <id>      # Rotate token (new token, old revoked, `ci-*` users removed). Update the CI secret; next run recreates the ci user with the new token's key
@@ -2340,7 +2347,7 @@ update:
     max_attempts: 5                   # Default: 3
     initial_interval: "30s"
     max_interval: "5m"
-    retryable_errors:
+    retryable_errors:                 # Case-insensitive substrings that ADD retries; built-in permanent errors (image not found, unauthorized) are never retried
       - "connection refused"
       - "timeout"
 stop_grace_period: 30s                # SIGTERM->SIGKILL on every task stop (deploy, rollback, scale-down, rm).
@@ -2540,7 +2547,7 @@ deploy:
   fast: true                          # Fast mode: skip convergence, minimal delay
   build_memory: "4g"                  # Build memory TARGET (sizes NODE_OPTIONS; not the builder's enforced cgroup limit — see below)
   build_cpus: 2.0                     # Build CPU target, same caveat
-  build_timeout: "1h"                 # Build timeout (default: 30m)
+  build_timeout: "1h"                 # Build timeout (default: 30m; `deploy --build-timeout` wins)
   registry: "docker.io"              # Named registry
   registry_path: "myorg/myproject"   # Override image path
   include:                            # Override exclusions
@@ -2610,7 +2617,8 @@ environments:
 | deploy | d, push |
 | remove | rm, delete |
 | logs | log |
-| exec | x, run |
+| exec | x |
+| run | (none) — `servel run <action>` runs a servel.yaml action |
 | rollback | rb |
 | inspect | i, info |
 | ps | ls, list |
