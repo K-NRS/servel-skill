@@ -692,6 +692,8 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 
 **Detection priority:** `servel.yaml` -> `docker-compose.yml` -> `Dockerfile` -> preset -> Nixpacks
 
+**Next.js + `bun.lock` (preset):** bun installs, Node builds and runs — Next 16's server does not load under the Bun runtime (`bun --bun next build/start` fail with a Bun CommonJS-wrapper bug). The preset copies `node:22-slim`'s Node into the Bun builder before `bun install` (so `bun run build` runs under Node) and runs on `node:22-slim` (`node server.js`, or `next start` with `--no-standalone`). No hand-written Dockerfile needed. `servel init` prints `Start:` (what the image runs) and `Dev:` (what `servel dev` runs); before 2026-11-15 it printed the dev command as `Start: bun run dev`, which was a mislabel, not what shipped.
+
 **Smart mode (default):** Detects what changed -> config-only (~8s), static-only (~10s), or full build.
 
 **Key flags:**
