@@ -1642,6 +1642,8 @@ servel status
 ```bash
 servel ci setup                       # Interactive wizard (init + token creation; GitHub: stores SERVEL_TOKEN via gh, else prints token once)
 servel ci setup github-actions        # Setup specific provider
+servel ci setup gitlab-ci --dir apps/web  # Root .gitlab-ci.yml for a nested servel.yaml (GitLab only reads the root file)
+servel ci setup --build-on-server     # Fallback: server builds (default is runner builds)
 servel ci init github-actions         # Generate workflow only (no token)
 servel ci init gitlab-ci --legacy-ssh # Legacy SSH key-based template
 servel ci list                        # List pipelines
@@ -1656,6 +1658,13 @@ servel ci server start --domain ci.example.com  # Webhook receiver
 ```
 
 **CI server security model.** Binds `127.0.0.1` only (plus the Docker gateway IP with `--domain`); `--domain` routes ONLY `/webhook/*`. `/api/*` needs `Authorization: Bearer <token>` from `/var/servel/ci/api-token` (0600, generated on first start; rotate = delete file + restart); API responses redact webhook secret, deploy key and env values. Webhooks are signature-checked against the pipeline secret: GitHub `X-Hub-Signature-256`, generic `X-Signature: sha256=<hex HMAC-SHA256 of body>`; bad signature or a pipeline with no secret → 401; body > 10 MB → 413. Secretless pipeline fix: `servel ci pipelines add <name>` again, then enter the printed secret in the git provider's webhook settings. Webhook URL is `https://<domain>/webhook/<provider>` (no port). Logs are 0600; masking = declared `secrets:` + name heuristic.
+
+**Default CI flow = build on the runner, cluster only pulls** (`SERVEL_IMAGE=auto` in generated pipelines; same as `servel deploy --image auto` or `image: auto` in servel.yaml):
+- Image `registry.gitlab.com/<group>/<project>:<sha12>` (or `ghcr.io/<owner>/<repo>:<sha12>`) from the git remote; login from `CI_REGISTRY_*` / `GITHUB_TOKEN`; a sha already in the registry is not rebuilt.
+- Build args match a server build: the running deployment's public env + secrets (`NEXT_PUBLIC_*`, `VITE_*`, …) < runner env/env files < `build.args` < `--build-env`, plus `SERVEL_GIT_COMMIT`; Dockerfile auto-augmented with the ARGs. The gitignored `.env.production` is not needed in CI; runtime env/secrets are inherited server-side.
+- One-time admin step for private images: `servel auth registry add registry.gitlab.com --username <deploy token username> --token <read_registry token>` (ghcr: `--token <PAT read:packages>`).
+- `--image <registry>/<path>:<tag>` deploys a prebuilt image without building. `--local-build` is different: it needs a registry configured on the server (`servel server registry auto`); prefer `--image auto`.
+- Server builds are CPU-capped (4 cores auto) and a silent `next build` > 20 min trips the stall abort (`SERVEL_DEPLOY_STALL_TIMEOUT`); move heavy builds to CI rather than raising the bound.
 
 ### Access Control
 
