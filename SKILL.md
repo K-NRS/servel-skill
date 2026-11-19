@@ -606,7 +606,8 @@ servel deploy --verbose --preview --ttl 24h     # Preview with cleanup
 servel deploy --verbose --link-infra db,redis   # Link infrastructure (internal DNS by default when same-swarm)
 servel deploy --verbose --link-infra db --public   # Force public-domain hostnames (e.g. for cross-swarm)
 servel deploy --verbose --link-infra db --internal # Hard-require same-swarm internal DNS
-servel deploy --verbose --dry-run               # Show plan only
+servel deploy --verbose --dry-run               # Show plan only (client-side; same detection + name inference as a real deploy)
+servel deploy --dry-run --json                  # Agents: machine-readable plan, status "planned" (never "running"); see Agent deploy lane
 servel deploy --verbose --no-registry           # Skip registry (single-node)
 servel deploy --verbose --env staging           # Multi-environment
 servel deploy --verbose --rebuild               # Force rebuild, skip cache
@@ -724,7 +725,8 @@ Node preset = Node 22 LTS (`node:22-alpine`; Next standalone on Bun runs `node:2
 
 **Key flags:**
 - `--name, -n` -- Deployment name. **Multi-service-from-one-repo: pass `--name <svc>` on EVERY deploy.** Deploy state is keyed per project dir, not per service; a repo that swaps `servel.yaml` to deploy several differently-named services (e.g. `cp deploy/<svc>.yaml servel.yaml; servel deploy`) shares one cached identity, and `--name` pins each service so they don't collide. Without `--name`, a `servel.yaml` `name:` that differs from the dir's last deployment is treated as a **separate deployment** (deploys under the yaml name, leaves the previous service running — it is NOT renamed/removed; that was the 2026-06-14 clobber, now non-destructive). Real renames: `servel rename <old> <new>`.
-- `--domain, -d` -- Domain for routing
+- `--domain, -d` -- Domain for routing. **It is the ONLY host** (since 2026-11-19): no `<name>.<primary domain>` route is added beside it. A `--domain` deploy saves the domain in `.servel/state.json` (non-servel.yaml projects) and plain redeploys reuse it, so the auto subdomain disappears on the next deploy of any folder ever deployed with `--domain`; the log prints `auto domain X is removed`. To keep both, list both under `domains:` in servel.yaml (yaml domains still get the auto subdomain beside them).
+- `--no-auto-domain` -- Publish no host you did not name: no `<name>.<primary domain>`, no magic subdomain claim. Without `--domain` → no public route. Saved in `.servel/state.json` (sticky for the folder); `--no-auto-domain=false` re-enables. Use it when the server's primary domain belongs to another project.
 - `--preview` -- Preview environment
 - `--ttl` -- Preview lifetime (1h, 6h, 1d, 7d, 2w)
 - `--link-infra` -- Link infrastructure (comma-separated). Defaults to internal Docker DNS (overlay alias) when same-swarm; the app auto-attaches to `servel-infra-{name}-network` so injected hosts resolve via Docker DNS instead of going through Traefik. Internal-only ports (e.g. postgres 5432) only work this way. Attachment is **reconciled on every deploy** (additive — operator-added networks survive), so adding a new link to an existing app and re-running `servel deploy` is enough; pre-fix, late-added links were silently dropped on the update path and showed up as `ENOTFOUND kong` / `ENOTFOUND <service>` at runtime. Connection env (DATABASE_URL etc.) is injected server-side via a trusted out-of-band channel (not process-env, so it bypasses the public-prefix env allowlist and never appears in `ps`), and link resolution is now **deterministic regardless of which manager smart-selection picks** — it falls back to a swarm-global lookup when the infra's node-local meta isn't on the SSH'd manager (previously failed `access:internal but not on deploy target swarm`).
@@ -861,6 +863,13 @@ max_failure_ratio), `stop_grace_period`, and `healthcheck.start_period` through
 the compose-go loader into Swarm. Existing database safety floors still apply.
 Omitted update blocks retain Servel defaults; explicit zero parallelism updates
 all tasks together and zero delay removes the batch delay.
+
+**Agent deploy lane (Claude Code auto mode):**
+1. `servel deploy --dry-run --json` — plan only. Allow it in `.claude/settings.json` as the EXACT rule `Bash(servel deploy --dry-run --json)` (no `:*`: a prefix rule also matches `... --dry-run=false`, a real deploy). Fields: `status: "planned"`, `name` (inferred from folder/servel.yaml/package.json — `--name` is optional), `detected_type`/`build_method` (one-file `index.html` folder → `preset` / `Preset (Static Site)`, nginx on 80, no Dockerfile; files are chmod'ed a+rX so mode 600 still serves), `routes[]` (`auto: true` = server auto subdomain; host is a placeholder because the client can't see the primary domain), `local_project` (present → this folder deploys that name; absent → never deployed from here), `build_env_keys` (names only), `server_checked: false` (same-name check runs at deploy time).
+2. Real deploys: give the agent its own scoped servel user (`servel access scope add <user> --server <srv> --groups sandbox --environments preview`; projects set `group: sandbox`). The server enforces the scope; a Claude Code permission rule only matches a command prefix and is not a security boundary.
+3. `servel deploy --json` → read `domains[]`: each host has `dns` = `ok|cloudflare|missing|mismatch|error`; missing/mismatch/error carry a `fix` (`add A record <host> -> <ip>`), cloudflare carries a `note` (cert not issued yet → DNS only until it is, HTTP-01; keep SSL/TLS Full (strict)). Primary-domain subdomains are checked too (no wildcard assumption).
+4. Project root = the folder you deploy. `servel.yaml` and `.servel/` are never read from a parent directory (only monorepo preset detection walks up). No need to copy a folder out of a repo to isolate it. A folder with no `.servel/` state deploying a name the server already runs STOPS (`deployment "x" already exists on <srv>, and this folder has never deployed it`) — pass `--update-existing` only if updating it is intended, else `--name <other>`. CI with a gitignored `.servel/state.json` needs `--update-existing`.
+5. Docker API version is negotiated by servel's Docker clients; `DOCKER_API_VERSION` is only for your local `docker` CLI.
 
 **Naming rules** (`<name>` must be a DNS label):
 - Lowercase `a-z`, digits `0-9`, hyphens — must start/end alphanumeric, max 63 chars. NO dots, underscores, uppercase.
