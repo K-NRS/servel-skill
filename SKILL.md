@@ -2503,7 +2503,7 @@ auth:
       username: admin
       password: "${ADMIN_PASSWORD}"   # Use: servel secrets set ADMIN_PASSWORD
 
-# Persistent storage (multi-node: kept on a manager unless node: pins it; deploy refuses, before building, any constraint set no ready node satisfies and names the conflict)
+# Persistent storage (multi-node: kept on a manager unless node:/--node pins it, then the dirs are created on that node, worker included; deploy refuses, before building, any constraint set no ready node satisfies and names the conflict)
 persist:
   - /app/data
   - /app/uploads
