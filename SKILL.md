@@ -673,7 +673,7 @@ servel start @mydb --with-linked      # Start infra first, then linked deploymen
                                       # counts (falls back to 1 when no record; apps retry until infra ready)
 servel rename <old> <new>             # Rename deployment
 servel exec <name> sh                 # Shell into container
-servel exec <name> -- cmd args        # Run command in container (no TTY needed — works from CI/agent shells)
+servel exec <name> -- cmd args        # Run command in container (no TTY needed — works from CI/agent shells). `<name> --` always wins over the folder's .servel state; `exec -- cmd` = the folder's own app; inside a folder a first arg equal to its own app name is the name, not the command
 servel exec @<infra> --service db --timeout 60s -- sh -c 'echo hi'   # one-shot + enforced timeout, clean stdout
 cat schema.sql | servel exec @mydb --stdin psql -U postgres          # --stdin = actually piping data in
 servel inspect <name>                 # Detailed deployment info (secrets redacted as *** by default; --show-secrets to reveal)
@@ -868,7 +868,7 @@ all tasks together and zero delay removes the batch delay.
 1. `servel deploy --dry-run --json` — plan only. Allow it in `.claude/settings.json` as the EXACT rule `Bash(servel deploy --dry-run --json)` (no `:*`: a prefix rule also matches `... --dry-run=false`, a real deploy). Fields: `status: "planned"`, `name` (inferred from folder/servel.yaml/package.json — `--name` is optional), `detected_type`/`build_method` (one-file `index.html` folder → `preset` / `Preset (Static Site)`, nginx on 80, no Dockerfile; files are chmod'ed a+rX so mode 600 still serves), `routes[]` (`auto: true` = server auto subdomain; host is a placeholder because the client can't see the primary domain), `local_project` (present → this folder deploys that name; absent → never deployed from here), `build_env_keys` (names only), `server_checked: false` (same-name check runs at deploy time).
 2. Real deploys: give the agent its own scoped servel user (`servel access scope add <user> --server <srv> --groups sandbox --environments preview`; projects set `group: sandbox`). The server enforces the scope; a Claude Code permission rule only matches a command prefix and is not a security boundary.
 3. `servel deploy --json` → read `domains[]`: each host has `dns` = `ok|cloudflare|missing|mismatch|error`; missing/mismatch/error carry a `fix` (`add A record <host> -> <ip>`), cloudflare carries a `note` (cert not issued yet → DNS only until it is, HTTP-01; keep SSL/TLS Full (strict)). Primary-domain subdomains are checked too (no wildcard assumption).
-4. Project root = the folder you deploy. `servel.yaml` and `.servel/` are never read from a parent directory (only monorepo preset detection walks up). No need to copy a folder out of a repo to isolate it. A folder with no `.servel/` state deploying a name the server already runs STOPS (`deployment "x" already exists on <srv>, and this folder has never deployed it`) — pass `--update-existing` only if updating it is intended, else `--name <other>`. CI with a gitignored `.servel/state.json` needs `--update-existing`.
+4. Project root = the folder you deploy. `servel.yaml` and `.servel/` are never read from a parent directory (only monorepo preset detection walks up). No need to copy a folder out of a repo to isolate it. A folder with no `.servel/` state deploying a name the server already runs STOPS (`deployment "x" already exists on <srv>, and this folder has never deployed it`) — pass `--update-existing` only if updating it is intended, else `--name <other>`. CI with a gitignored `.servel/state.json` needs `--update-existing`. `servel rm` releases the name (its newest record is marked stopped), and a folder whose FIRST deploy failed saves its state and owns the app, so its retry needs no flag.
 5. Docker API version is negotiated by servel's Docker clients; `DOCKER_API_VERSION` is only for your local `docker` CLI.
 
 **Naming rules** (`<name>` must be a DNS label):
@@ -2503,7 +2503,7 @@ auth:
       username: admin
       password: "${ADMIN_PASSWORD}"   # Use: servel secrets set ADMIN_PASSWORD
 
-# Persistent storage
+# Persistent storage (multi-node: kept on a manager unless node:/--node pins it, then the dirs are created on that node, worker included; deploy refuses, before building, any constraint set no ready node satisfies and names the conflict)
 persist:
   - /app/data
   - /app/uploads
@@ -2512,7 +2512,7 @@ persist:
 volumes:
   - source: ./data
     target: /app/data
-    type: bind                        # bind (default), volume
+    type: bind                        # bind (default): ./rel or /abs host path. type: volume = named Docker volume (source = name, default <name>-<target>); a bare-name bind or a path-source volume is rejected at parse time
     readonly: false
     consistency: local                # "local" (default) or "strong" (DRBD replication)
     replicas: 2                       # For consistency=strong
