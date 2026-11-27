@@ -678,6 +678,7 @@ servel exec <name> -- cmd args        # Run command in container (no TTY needed 
 servel exec @<infra> --service db --timeout 60s -- sh -c 'echo hi'   # one-shot + enforced timeout, clean stdout
 cat schema.sql | servel exec @mydb --stdin psql -U postgres          # --stdin = actually piping data in
 servel inspect <name>                 # Detailed deployment info (secrets redacted as *** by default; --show-secrets to reveal)
+                                      # Runtime: bun 1.4.5  oven/bun:1-debian@sha256:… (base image + digest + version per generation; --json: servel_deployment.runtime; empty for generations built before 2026-11-21 until redeployed)
 servel history <name>                 # Deployment history
 servel versions <name>                # Available versions
 servel find myapp                    # Find across all servers
@@ -720,7 +721,7 @@ Use `ARG SERVEL_GIT_COMMIT` + `ENV SERVEL_GIT_COMMIT=$SERVEL_GIT_COMMIT` in Dock
 
 **Detection priority:** `servel.yaml` -> `docker-compose.yml` -> `Dockerfile` -> preset -> Nixpacks
 
-Node preset = Node 22 LTS (`node:22-alpine`; Next standalone on Bun runs `node:22-slim`). Node 20 is EOL. Floating base tags only pick up Node patch releases on `servel deploy --pull --rebuild`.
+Node preset = Node 22 LTS (`node:22-alpine`). Bun preset + Next.js builds AND runs under Bun on `oven/bun:1-debian` (`bun server.js` standalone, `bun run start` with `--no-standalone`; no Node in the image; glibc so sharp loads; HTTP health check falls back to TCP listen). Astro on the bun preset still runs `node:22-slim`. Node 20 is EOL. Floating base tags only pick up Node patch releases on `servel deploy --pull --rebuild`.
 
 **Smart mode (default):** Detects what changed -> config-only (~8s), static-only (~10s), or full build.
 
@@ -2566,7 +2567,7 @@ deploy:
   no_cache: true                      # Disable build cache
   pull: true                          # Always pull latest base images
   no_cleanup: true                    # Skip cleanup of old images
-  skip_build: true                    # Skip build, use pre-built output
+  skip_build: true                    # Skip build, use pre-built output (preset builds only: with a project Dockerfile the deploy is REFUSED before upload -> use --local-build / --image <ref>, drop skip_build, or set build.type: preset)
   fast: true                          # Fast mode: skip convergence, minimal delay
   build_memory: "4g"                  # Build memory TARGET (sizes NODE_OPTIONS; not the builder's enforced cgroup limit — see below)
   build_cpus: 2.0                     # Build CPU target, same caveat
